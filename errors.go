@@ -2,6 +2,7 @@ package libauth
 
 import (
 	"github.com/cupen/libauth/authz"
+	"github.com/cupen/libauth/jwt"
 	"github.com/cupen/libauth/middleware"
 	"github.com/cupen/libauth/model"
 	"github.com/cupen/libauth/store"
@@ -21,6 +22,21 @@ var (
 	ErrInheritanceDepth  = authz.ErrInheritanceDepth
 
 	ErrInvalidIdentityFunc = middleware.ErrInvalidIdentityFunc
+
+	ErrTokenMalformed      = jwt.ErrTokenMalformed
+	ErrTokenBadSignature   = jwt.ErrTokenBadSignature
+	ErrTokenExpired        = jwt.ErrTokenExpired
+	ErrTokenNotYetValid    = jwt.ErrTokenNotYetValid
+	ErrTokenIssuedInFuture = jwt.ErrTokenIssuedInFuture
+	ErrAlgMismatch         = jwt.ErrAlgMismatch
+	ErrUnexpectedTyp       = jwt.ErrUnexpectedTyp
+	ErrUnsupportedCrit     = jwt.ErrUnsupportedCrit
+	ErrMissingExpiration   = jwt.ErrMissingExpiration
+	ErrReservedClaim       = jwt.ErrReservedClaim
+	ErrIssuerMismatch      = jwt.ErrIssuerMismatch
+	ErrAudienceMismatch    = jwt.ErrAudienceMismatch
+	ErrInvalidKey          = jwt.ErrInvalidKey
+	ErrTokenWithoutSubject = jwt.ErrTokenWithoutSubject
 )
 
 type PermissionDeniedError = model.PermissionDeniedError

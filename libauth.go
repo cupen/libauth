@@ -8,6 +8,12 @@
 // contract in store, the HTTP guards in middleware and the RBAC
 // orchestration in authz (as the Enforcer type). All public identifiers are
 // re-exported from this package so callers only need one import.
+//
+// Stateless identity tokens come in two flavours: signed JWTs in the jwt
+// subpackage (HS256 / Ed25519, stdlib only) and encrypted branca tokens in
+// the branca subpackage (XChaCha20-Poly1305, golang.org/x/crypto). Both
+// expose VerifyBearer, which libauth.BearerIdentity wires into the
+// middleware as an identity source.
 package libauth
 
 import (
