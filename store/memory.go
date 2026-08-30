@@ -33,12 +33,9 @@ func cloneUser(u *model.User) *model.User {
 }
 
 func cloneRole(r *model.Role) *model.Role {
-	c := &model.Role{Name: r.Name}
+	c := &model.Role{Name: r.Name, Parent: r.Parent}
 	if len(r.Permissions) > 0 {
 		c.Permissions = append([]model.Permission(nil), r.Permissions...)
-	}
-	if len(r.Parents) > 0 {
-		c.Parents = append([]model.RoleName(nil), r.Parents...)
 	}
 	return c
 }

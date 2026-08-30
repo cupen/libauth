@@ -5,41 +5,36 @@ import (
 	"github.com/cupen/libauth/store"
 )
 
+// validateInheritance rejects self-parents, cycles and chains deeper than
+// maxDepth. With single parents the ancestor walk is a simple loop.
 func (e *Enforcer) validateInheritance(r *model.Role) error {
-	for _, parent := range r.Parents {
-		if parent == r.Name {
-			return ErrCyclicInheritance
-		}
-		if _, err := e.store.GetRole(parent); err != nil {
-			return err
-		}
+	if r.Parent == "" {
+		return nil
+	}
+	if r.Parent == r.Name {
+		return ErrCyclicInheritance
+	}
+	if _, err := e.store.GetRole(r.Parent); err != nil {
+		return err
 	}
 
-	visited := map[model.RoleName]bool{r.Name: true}
-	queue := append([]model.RoleName(nil), r.Parents...)
-	for depth := 0; len(queue) > 0; depth++ {
+	// Walk up from r.Parent; reaching r again closes a cycle.
+	name := r.Parent
+	for depth := 1; name != ""; depth++ {
+		if name == r.Name {
+			return ErrCyclicInheritance
+		}
 		if depth > e.maxDepth {
 			return ErrInheritanceDepth
 		}
-		next := make([]model.RoleName, 0, len(queue))
-		for _, name := range queue {
-			if name == r.Name {
-				return ErrCyclicInheritance
+		role, err := e.store.GetRole(name)
+		if err != nil {
+			if err == store.ErrRoleNotFound {
+				break // dangling ancestor: tolerated, can only come from external store edits
 			}
-			if visited[name] {
-				continue
-			}
-			visited[name] = true
-			role, err := e.store.GetRole(name)
-			if err != nil {
-				if err == store.ErrRoleNotFound {
-					continue
-				}
-				return err
-			}
-			next = append(next, role.Parents...)
+			return err
 		}
-		queue = next
+		name = role.Parent
 	}
 	return nil
 }

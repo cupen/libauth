@@ -7,8 +7,8 @@ import (
 	"github.com/cupen/libauth/store"
 )
 
-// RolesFor returns the user's effective role chain (direct + inherited,
-// deduplicated, sorted).
+// RolesFor returns the user's effective role chain (direct roles plus their
+// single-parent ancestor chains, deduplicated, sorted).
 func (e *Enforcer) RolesFor(id model.UserID) ([]model.RoleName, error) {
 	u, err := e.store.GetUser(id)
 	if err != nil {
@@ -19,7 +19,7 @@ func (e *Enforcer) RolesFor(id model.UserID) ([]model.RoleName, error) {
 
 func (e *Enforcer) resolveRoles(u *model.User) ([]model.RoleName, error) {
 	seen := make(map[model.RoleName]bool, len(u.Roles))
-	queue := make([]model.RoleName, 0, len(u.Roles))
+	queue := make([]model.RoleName, 0, 2*len(u.Roles))
 	for _, r := range u.Roles {
 		if !seen[r] {
 			seen[r] = true
@@ -27,33 +27,21 @@ func (e *Enforcer) resolveRoles(u *model.User) ([]model.RoleName, error) {
 		}
 	}
 
-	// BFS expansion; each "round" walks the parents of one generation.
-	// A round that appends no new roles ends the walk.
-	processed := 0
-	for depth := 1; processed < len(queue); depth++ {
-		if depth > e.maxDepth {
-			return nil, ErrInheritanceDepth
-		}
-		end := len(queue)
-		for i := processed; i < end; i++ {
-			role, err := e.store.GetRole(queue[i])
-			if err != nil {
-				if err == store.ErrRoleNotFound {
-					continue
-				}
-				return nil, err
+	// Walk up the single-parent chain of every direct role. Termination is
+	// guaranteed: Parent=="" ends a chain and seen breaks cycles. Write-time
+	// validation bounds chain length, so no depth check is needed here.
+	for i := 0; i < len(queue); i++ {
+		role, err := e.store.GetRole(queue[i])
+		if err != nil {
+			if err == store.ErrRoleNotFound {
+				continue
 			}
-			for _, parent := range role.Parents {
-				if !seen[parent] {
-					seen[parent] = true
-					queue = append(queue, parent)
-				}
-			}
+			return nil, err
 		}
-		if len(queue) == end {
-			break // no new parents appended
+		if role.Parent != "" && !seen[role.Parent] {
+			seen[role.Parent] = true
+			queue = append(queue, role.Parent)
 		}
-		processed = end
 	}
 
 	sort.Slice(queue, func(i, j int) bool { return queue[i] < queue[j] })

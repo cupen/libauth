@@ -98,21 +98,21 @@ func TestMemoryStoreRoleCRUD(t *testing.T) {
 	}
 	r.Permissions[0] = model.Permission{Resource: "hacked", Action: "x"}
 	r.Permissions = append(r.Permissions, model.Permission{Resource: "injected"})
-	r.Parents = append(r.Parents, "injected-parent")
+	r.Parent = "injected-parent"
 	again, err := s.GetRole("r1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(again.Permissions) != 1 || again.Permissions[0] != (model.Permission{Resource: "a", Action: "b"}) || len(again.Parents) != 0 {
+	if len(again.Permissions) != 1 || again.Permissions[0] != (model.Permission{Resource: "a", Action: "b"}) || again.Parent != "" {
 		t.Errorf("store leaked mutable internal state: %+v", again)
 	}
 
 	// UpdateRole replaces the persisted record.
-	if err := s.UpdateRole(&model.Role{Name: "r1", Parents: []model.RoleName{"p"}}); err != nil {
+	if err := s.UpdateRole(&model.Role{Name: "r1", Parent: "p"}); err != nil {
 		t.Fatal(err)
 	}
 	r3, _ := s.GetRole("r1")
-	if len(r3.Permissions) != 0 || len(r3.Parents) != 1 || r3.Parents[0] != "p" {
+	if len(r3.Permissions) != 0 || r3.Parent != "p" {
 		t.Errorf("UpdateRole did not persist: %+v", r3)
 	}
 
@@ -135,7 +135,7 @@ func TestMemoryStoreDeleteRoleIsShallow(t *testing.T) {
 	if err := s.CreateRole(&model.Role{Name: "parent"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateRole(&model.Role{Name: "child", Parents: []model.RoleName{"parent"}}); err != nil {
+	if err := s.CreateRole(&model.Role{Name: "child", Parent: "parent"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.CreateUser(&model.User{ID: "u", Roles: []model.RoleName{"parent"}}); err != nil {
@@ -150,7 +150,7 @@ func TestMemoryStoreDeleteRoleIsShallow(t *testing.T) {
 	}
 	// Caller is expected to clean these up.
 	child, _ := s.GetRole("child")
-	if len(child.Parents) != 1 || child.Parents[0] != "parent" {
+	if child.Parent != "parent" {
 		t.Errorf("store unexpectedly mutated dangling refs: %+v", child)
 	}
 	u, _ := s.GetUser("u")

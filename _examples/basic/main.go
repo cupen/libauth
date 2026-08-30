@@ -17,17 +17,17 @@ func main() {
 	must(m.CreateRole("viewer", []libauth.Permission{
 		libauth.Permission{Resource: "article", Action: "read"},
 		libauth.Permission{Resource: "whoami", Action: "read"},
-	}))
+	}, ""))
 	must(m.CreateRole("editor", []libauth.Permission{
 		{Resource: "article", Action: "create"},
 		{Resource: "article", Action: "edit"},
 		{Resource: "article", Action: "read"},
 		{Resource: "whoami", Action: "read"},
-	}))
+	}, ""))
 	// publisher inherits every editor permission and adds its own.
 	must(m.CreateRole("publisher",
 		[]libauth.Permission{{Resource: "article", Action: "publish"}}, "editor"))
-	must(m.CreateRole("admin", []libauth.Permission{{Resource: "*"}}))
+	must(m.CreateRole("admin", []libauth.Permission{{Resource: "*"}}, ""))
 
 	must(m.CreateUser("carol", "viewer"))
 	must(m.CreateUser("bob", "editor", "viewer"))

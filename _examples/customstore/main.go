@@ -138,11 +138,11 @@ func main() {
 	must(m.CreateRole("editor", []libauth.Permission{
 		{Resource: "article", Action: "create"},
 		{Resource: "article", Action: "read"},
-	}))
+	}, ""))
 	must(m.CreateRole("viewer", []libauth.Permission{
 		{Resource: "article", Action: "read"},
 		{Resource: "whoami", Action: "read"},
-	}))
+	}, ""))
 	must(m.CreateUser("bob", "editor", "viewer"))
 
 	reloaded, err := newFileStore(path)

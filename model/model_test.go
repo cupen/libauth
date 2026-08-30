@@ -128,11 +128,11 @@ func TestRoleHelpers(t *testing.T) {
 			{Resource: "article", Action: "create"},
 			{Resource: "article", Action: "edit"},
 		},
-		Parents: []RoleName{"viewer", "contributor"},
+		Parent: "viewer",
 	}
 
-	if !r.HasParent("viewer") || r.HasParent("admin") {
-		t.Error("HasParent lookup failed")
+	if r.Parent != "viewer" {
+		t.Errorf("Parent = %q, want viewer", r.Parent)
 	}
 	if !r.HasPermission(Permission{Resource: "article", Action: "create"}) {
 		t.Error("role should grant its own permission")

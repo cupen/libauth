@@ -4,20 +4,13 @@ package model
 type RoleName = string
 
 // Role is a named set of permissions. A role inherits permissions of its
-// parent roles transitively.
+// single parent (if any); a user needing to combine several permission sets
+// simply holds several roles.
 type Role struct {
 	Name        RoleName     `json:"name"`
 	Permissions []Permission `json:"permissions"`
-	Parents     []RoleName   `json:"parents,omitempty"`
-}
-
-func (r *Role) HasParent(name RoleName) bool {
-	for _, p := range r.Parents {
-		if p == name {
-			return true
-		}
-	}
-	return false
+	// Parent is the role this role inherits from; empty means no parent.
+	Parent RoleName `json:"parent,omitempty"`
 }
 
 func (r *Role) HasPermission(p Permission) bool {

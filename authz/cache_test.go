@@ -73,20 +73,20 @@ func TestCacheInvalidation(t *testing.T) {
 	}
 
 	// UpdateRole mutates the role's permissions wholesale: same expectation.
-	if err := e.UpdateRole("viewer", []model.Permission{perm("article:read"), articleComment}); err != nil {
+	if err := e.UpdateRole("viewer", []model.Permission{perm("article:read"), articleComment}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if !read(articleComment) {
 		t.Error("UpdateRole should invalidate role holders")
 	}
 
-	// AddParent changes the inherited role chain: must invalidate.
-	if err := e.AddParent("viewer", "editor"); err != nil {
+	// SetParent changes the inherited role chain: must invalidate.
+	if err := e.SetParent("viewer", "editor"); err != nil {
 		t.Fatal(err)
 	}
 	// carol now inherits editor's permissions through viewer.
 	if !read(articleCreate) {
-		t.Error("AddParent should invalidate role holders (inherited grant missing)")
+		t.Error("SetParent should invalidate role holders (inherited grant missing)")
 	}
 
 	// DeleteRole cascade-detaches and must invalidate holders.
@@ -168,7 +168,7 @@ func errIs(err, target error) bool {
 // Numbers should be orders of magnitude better than BenchmarkCheckCold.
 func BenchmarkCheckHit(b *testing.B) {
 	e := New()
-	if err := e.CreateRole("admin", []model.Permission{{Resource: "*"}}); err != nil {
+	if err := e.CreateRole("admin", []model.Permission{{Resource: "*"}}, ""); err != nil {
 		b.Fatal(err)
 	}
 	if err := e.CreateUser("alice", "admin"); err != nil {
@@ -188,7 +188,7 @@ func BenchmarkCheckHit(b *testing.B) {
 // BenchmarkCheckCold measures the cache-miss cost (full recompute).
 func BenchmarkCheckCold(b *testing.B) {
 	e := New()
-	if err := e.CreateRole("admin", []model.Permission{{Resource: "*"}}); err != nil {
+	if err := e.CreateRole("admin", []model.Permission{{Resource: "*"}}, ""); err != nil {
 		b.Fatal(err)
 	}
 	if err := e.CreateUser("alice", "admin"); err != nil {

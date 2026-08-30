@@ -29,8 +29,8 @@ func Example() {
 
 	_ = e.CreateRole("editor", []libauth.Permission{
 		perm("article:create"), perm("article:edit"), perm("article:read"),
-	})
-	_ = e.CreateRole("viewer", []libauth.Permission{perm("article:read")})
+	}, "")
+	_ = e.CreateRole("viewer", []libauth.Permission{perm("article:read")}, "")
 	_ = e.CreateUser("bob", "editor", "viewer")
 
 	fmt.Println(e.Check("bob", perm("article:create")))
@@ -47,7 +47,7 @@ func Example() {
 func ExampleEnforcer_RolesFor() {
 	e := libauth.New()
 
-	_ = e.CreateRole("editor", []libauth.Permission{perm("article:create"), perm("article:read")})
+	_ = e.CreateRole("editor", []libauth.Permission{perm("article:create"), perm("article:read")}, "")
 	_ = e.CreateRole("publisher", []libauth.Permission{perm("article:publish")}, "editor")
 	_ = e.CreateUser("dave", "publisher")
 
@@ -70,8 +70,8 @@ func ExampleEnforcer_RolesFor() {
 func Example_wildcards() {
 	e := libauth.New()
 
-	_ = e.CreateRole("admin", []libauth.Permission{perm("*")})
-	_ = e.CreateRole("article-admin", []libauth.Permission{perm("article:*")})
+	_ = e.CreateRole("admin", []libauth.Permission{perm("*")}, "")
+	_ = e.CreateRole("article-admin", []libauth.Permission{perm("article:*")}, "")
 	_ = e.CreateUser("alice", "admin")
 	_ = e.CreateUser("oak", "article-admin")
 
@@ -98,8 +98,8 @@ func Example_wildcards() {
 func ExampleEnforcer_AssignRole() {
 	e := libauth.New()
 
-	_ = e.CreateRole("viewer", []libauth.Permission{perm("article:read")})
-	_ = e.CreateRole("editor", []libauth.Permission{perm("article:create"), perm("article:read")})
+	_ = e.CreateRole("viewer", []libauth.Permission{perm("article:read")}, "")
+	_ = e.CreateRole("editor", []libauth.Permission{perm("article:create"), perm("article:read")}, "")
 	_ = e.CreateUser("carol", "viewer")
 
 	fmt.Println(e.Check("carol", perm("article:create")))
@@ -120,7 +120,7 @@ func ExampleEnforcer_AssignRole() {
 func ExampleEnforcer_GrantDirectPermission() {
 	e := libauth.New()
 
-	_ = e.CreateRole("viewer", []libauth.Permission{perm("article:read")})
+	_ = e.CreateRole("viewer", []libauth.Permission{perm("article:read")}, "")
 	_ = e.CreateUser("carol", "viewer")
 
 	_ = e.GrantDirectPermission("carol", perm("article:comment"))
@@ -141,8 +141,8 @@ func ExampleEnforcer_PermissionsFor() {
 
 	_ = e.CreateRole("editor", []libauth.Permission{
 		perm("article:create"), perm("article:edit"), perm("article:read"), perm("whoami:read"),
-	})
-	_ = e.CreateRole("viewer", []libauth.Permission{perm("article:read"), perm("whoami:read")})
+	}, "")
+	_ = e.CreateRole("viewer", []libauth.Permission{perm("article:read"), perm("whoami:read")}, "")
 	_ = e.CreateUser("bob", "editor", "viewer")
 	_ = e.GrantDirectPermission("bob", perm("article:comment"))
 
@@ -157,7 +157,7 @@ func ExampleEnforcer_PermissionsFor() {
 func ExampleEnforcer_Check() {
 	e := libauth.New()
 
-	_ = e.CreateRole("viewer", []libauth.Permission{perm("article:read")})
+	_ = e.CreateRole("viewer", []libauth.Permission{perm("article:read")}, "")
 	_ = e.CreateUser("carol", "viewer")
 
 	fmt.Println(e.Check("carol", perm("article:read")))
@@ -181,7 +181,7 @@ func ExampleEnforcer_Check() {
 func ExampleNewMiddleware() {
 	e := libauth.New()
 
-	_ = e.CreateRole("editor", []libauth.Permission{perm("article:create"), perm("article:read")})
+	_ = e.CreateRole("editor", []libauth.Permission{perm("article:create"), perm("article:read")}, "")
 	_ = e.CreateUser("bob", "editor")
 
 	mw, _ := libauth.NewMiddleware(e, libauth.HeaderIdentity(""))

@@ -25,7 +25,7 @@ func buildEnforcer(b *testing.B, resources, actions int) (*Enforcer, model.Permi
 				Action:   fmt.Sprintf("act%d", j),
 			}
 		}
-		if err := e.CreateRole(rname, perms); err != nil {
+		if err := e.CreateRole(rname, perms, ""); err != nil {
 			b.Fatal(err)
 		}
 	}

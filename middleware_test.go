@@ -36,13 +36,13 @@ func newTestEnforcer(t *testing.T) *Enforcer {
 	t.Helper()
 	e := New()
 
-	if err := e.CreateRole("admin", []Permission{perm("*")}); err != nil {
+	if err := e.CreateRole("admin", []Permission{perm("*")}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.CreateRole("editor", []Permission{perm("article:create"), perm("article:edit"), perm("article:read")}); err != nil {
+	if err := e.CreateRole("editor", []Permission{perm("article:create"), perm("article:edit"), perm("article:read")}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.CreateRole("viewer", []Permission{perm("article:read")}); err != nil {
+	if err := e.CreateRole("viewer", []Permission{perm("article:read")}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.CreateRole("publisher", []Permission{perm("article:publish")}, "editor"); err != nil {

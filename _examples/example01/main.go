@@ -1,7 +1,8 @@
 // Command example demonstrates libauth with a small HTTP API.
 //
 // Identities are supplied via the X-User-ID header (see HeaderIdentity);
-// plug in JWT/session authentication in production.
+// for a real deployment plug in JWT/session authentication — see
+// _examples/jwtauth for a Bearer-token variant.
 //
 // Seeded accounts:
 //
@@ -66,24 +67,24 @@ func seed() *libauth.Enforcer {
 	for _, r := range []struct {
 		name        string
 		permissions []libauth.Permission
-		parents     []libauth.RoleName
+		parent      libauth.RoleName
 	}{
-		{"admin", []libauth.Permission{{Resource: "*"}}, nil},
+		{"admin", []libauth.Permission{{Resource: "*"}}, ""},
 		{"editor", []libauth.Permission{
 			{Resource: "article", Action: "create"},
 			{Resource: "article", Action: "edit"},
 			{Resource: "article", Action: "read"},
 			{Resource: "whoami", Action: "read"},
-		}, nil},
+		}, ""},
 		{"viewer", []libauth.Permission{
 			{Resource: "article", Action: "read"},
 			{Resource: "whoami", Action: "read"},
-		}, nil},
+		}, ""},
 		{"publisher", []libauth.Permission{
 			{Resource: "article", Action: "publish"},
-		}, []libauth.RoleName{"editor"}},
+		}, "editor"},
 	} {
-		if err := m.CreateRole(r.name, r.permissions, r.parents...); err != nil {
+		if err := m.CreateRole(r.name, r.permissions, r.parent); err != nil {
 			log.Fatal(err)
 		}
 	}

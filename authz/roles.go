@@ -5,7 +5,9 @@ import (
 	"github.com/cupen/libauth/store"
 )
 
-func (e *Enforcer) CreateRole(name model.RoleName, permissions []model.Permission, parents ...model.RoleName) error {
+// CreateRole registers a new role. Parent, when non-empty, must exist and
+// must not create a cycle or exceed the inheritance depth cap.
+func (e *Enforcer) CreateRole(name model.RoleName, permissions []model.Permission, parent model.RoleName) error {
 	if name == "" {
 		return store.ErrEmptyName
 	}
@@ -17,7 +19,7 @@ func (e *Enforcer) CreateRole(name model.RoleName, permissions []model.Permissio
 	r := &model.Role{
 		Name:        name,
 		Permissions: append([]model.Permission(nil), permissions...),
-		Parents:     append([]model.RoleName(nil), parents...),
+		Parent:      parent,
 	}
 	if err := e.validateInheritance(r); err != nil {
 		return err
@@ -26,7 +28,9 @@ func (e *Enforcer) CreateRole(name model.RoleName, permissions []model.Permissio
 	return e.store.CreateRole(r)
 }
 
-func (e *Enforcer) UpdateRole(name model.RoleName, permissions []model.Permission, parents ...model.RoleName) error {
+// UpdateRole replaces a role's permissions and parent. Cycles and
+// over-deep chains are rejected.
+func (e *Enforcer) UpdateRole(name model.RoleName, permissions []model.Permission, parent model.RoleName) error {
 	if name == "" {
 		return store.ErrEmptyName
 	}
@@ -38,7 +42,7 @@ func (e *Enforcer) UpdateRole(name model.RoleName, permissions []model.Permissio
 	r := &model.Role{
 		Name:        name,
 		Permissions: append([]model.Permission(nil), permissions...),
-		Parents:     append([]model.RoleName(nil), parents...),
+		Parent:      parent,
 	}
 	if err := e.validateInheritance(r); err != nil {
 		return err
@@ -51,7 +55,7 @@ func (e *Enforcer) UpdateRole(name model.RoleName, permissions []model.Permissio
 }
 
 // DeleteRole removes the role and cascade-detaches it from every user's
-// Roles and every other role's Parents.
+// Roles and from every role that named it as Parent.
 func (e *Enforcer) DeleteRole(name model.RoleName) error {
 	if _, err := e.store.GetRole(name); err != nil {
 		return err
@@ -90,14 +94,8 @@ func (e *Enforcer) DeleteRole(name model.RoleName) error {
 		return err
 	}
 	for _, r := range roles {
-		kept := r.Parents[:0]
-		for _, p := range r.Parents {
-			if p != name {
-				kept = append(kept, p)
-			}
-		}
-		if len(kept) != len(r.Parents) {
-			r.Parents = kept
+		if r.Parent == name {
+			r.Parent = ""
 			if err := e.store.UpdateRole(r); err != nil {
 				return err
 			}
@@ -163,18 +161,22 @@ func (e *Enforcer) RevokePermission(role model.RoleName, p model.Permission) err
 	return nil
 }
 
-func (e *Enforcer) AddParent(role, parent model.RoleName) error {
+// SetParent makes role inherit from parent. A role has at most one parent:
+// setting a new parent replaces the previous one, and an empty parent
+// detaches the role from any inheritance chain. Cycles and over-deep chains
+// are rejected.
+func (e *Enforcer) SetParent(role, parent model.RoleName) error {
 	r, err := e.store.GetRole(role)
 	if err != nil {
 		return err
 	}
-	if _, err := e.store.GetRole(parent); err != nil {
+	if _, err := e.store.GetRole(parent); parent != "" && err != nil {
 		return err
 	}
-	if r.HasParent(parent) {
+	if r.Parent == parent {
 		return nil
 	}
-	r.Parents = append(r.Parents, parent)
+	r.Parent = parent
 	if err := e.validateInheritance(r); err != nil {
 		return err
 	}

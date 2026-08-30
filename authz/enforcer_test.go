@@ -24,13 +24,13 @@ func newTestEnforcer(t *testing.T) *Enforcer {
 	t.Helper()
 	e := New()
 
-	if err := e.CreateRole("admin", []model.Permission{perm("*")}); err != nil {
+	if err := e.CreateRole("admin", []model.Permission{perm("*")}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.CreateRole("editor", []model.Permission{perm("article:create"), perm("article:edit"), perm("article:read")}); err != nil {
+	if err := e.CreateRole("editor", []model.Permission{perm("article:create"), perm("article:edit"), perm("article:read")}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.CreateRole("viewer", []model.Permission{perm("article:read")}); err != nil {
+	if err := e.CreateRole("viewer", []model.Permission{perm("article:read")}, ""); err != nil {
 		t.Fatal(err)
 	}
 	// publisher inherits everything an editor has, plus publishing.
@@ -131,7 +131,7 @@ func TestDeepInheritanceChain(t *testing.T) {
 	e := newTestEnforcer(t)
 
 	// Build a 10-level chain: l1 <- l2 <- ... <- l10.
-	if err := e.CreateRole("l1", []model.Permission{perm("deep:read")}); err != nil {
+	if err := e.CreateRole("l1", []model.Permission{perm("deep:read")}, ""); err != nil {
 		t.Fatal(err)
 	}
 	for i := 2; i <= 10; i++ {
@@ -157,7 +157,7 @@ func TestCyclicInheritanceRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	// admin -> a -> admin would be a cycle.
-	if err := e.AddParent("admin", "a"); !errors.Is(err, ErrCyclicInheritance) {
+	if err := e.SetParent("admin", "a"); !errors.Is(err, ErrCyclicInheritance) {
 		t.Errorf("cycle should be rejected, got %v", err)
 	}
 }
@@ -277,7 +277,7 @@ func TestDeleteRoleDetaches(t *testing.T) {
 func TestUpdateRole(t *testing.T) {
 	e := newTestEnforcer(t)
 
-	if err := e.UpdateRole("viewer", []model.Permission{perm("article:read"), perm("article:comment")}); err != nil {
+	if err := e.UpdateRole("viewer", []model.Permission{perm("article:read"), perm("article:comment")}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.Check("carol", perm("article:comment")); err != nil {
@@ -326,13 +326,13 @@ func TestMemoryStoreConcurrentAccess(t *testing.T) {
 func TestInvalidPermissionsRejected(t *testing.T) {
 	e := newTestEnforcer(t)
 	bad := model.Permission{Resource: "article", Action: ""}
-	if err := e.CreateRole("bad", []model.Permission{bad}); !errors.Is(err, model.ErrInvalidPermission) {
+	if err := e.CreateRole("bad", []model.Permission{bad}, ""); !errors.Is(err, model.ErrInvalidPermission) {
 		t.Errorf("empty action should be invalid, got %v", err)
 	}
 	if err := e.GrantPermission("viewer", bad); !errors.Is(err, model.ErrInvalidPermission) {
 		t.Errorf("empty action grant should be invalid, got %v", err)
 	}
-	if err := e.CreateRole("ok-role", []model.Permission{perm("a:b:c")}); err != nil {
+	if err := e.CreateRole("ok-role", []model.Permission{perm("a:b:c")}, ""); err != nil {
 		t.Errorf("multi-segment permission should be valid, got %v", err)
 	}
 }
@@ -356,26 +356,27 @@ func TestWithStoreOption(t *testing.T) {
 }
 
 func TestWithMaxDepth(t *testing.T) {
+	// Write-time enforcement: chains deeper than maxDepth are rejected when
+	// the role that would over-deepen them is created.
 	e := New(WithMaxDepth(3))
 
-	// Chain: l1 <- l2 <- l3 <- l4 <- l5.
-	if err := e.CreateRole("l1", []model.Permission{perm("deep:read")}); err != nil {
+	// Chain: l1 <- l2 <- l3 <- l4 (3 edges) is fine; l5 would need 4.
+	if err := e.CreateRole("l1", []model.Permission{perm("deep:read")}, ""); err != nil {
 		t.Fatal(err)
 	}
-	for i := 2; i <= 5; i++ {
+	for i := 2; i <= 4; i++ {
 		if err := e.CreateRole(model.RoleName(fmt.Sprintf("l%d", i)), nil, model.RoleName(fmt.Sprintf("l%d", i-1))); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := e.CreateUser("deep", "l5"); err != nil {
+	if err := e.CreateRole("l5", nil, "l4"); !errors.Is(err, ErrInheritanceDepth) {
+		t.Errorf("4-edge chain with maxDepth=3: want ErrInheritanceDepth, got %v", err)
+	}
+	if err := e.CreateUser("deep", "l4"); err != nil {
 		t.Fatal(err)
 	}
-
-	if _, err := e.RolesFor("deep"); !errors.Is(err, ErrInheritanceDepth) {
-		t.Errorf("5-level chain with maxDepth=3: want ErrInheritanceDepth, got %v", err)
-	}
-	if err := e.Check("deep", perm("deep:read")); !errors.Is(err, ErrInheritanceDepth) {
-		t.Errorf("Check should propagate ErrInheritanceDepth, got %v", err)
+	if err := e.Check("deep", perm("deep:read")); err != nil {
+		t.Errorf("chain within the cap should resolve: %v", err)
 	}
 
 	// Non-positive depths are ignored; the default applies.
@@ -383,7 +384,7 @@ func TestWithMaxDepth(t *testing.T) {
 	if loose.maxDepth != DefaultMaxDepth {
 		t.Errorf("invalid WithMaxDepth values should be ignored, got %d", loose.maxDepth)
 	}
-	mustRole(t, loose, "a", []model.Permission{perm("x:1")})
+	mustRole(t, loose, "a", []model.Permission{perm("x:1")}, "")
 	mustRole(t, loose, "b", nil, "a")
 	mustRole(t, loose, "c", nil, "b")
 	if err := loose.CreateUser("u", "c"); err != nil {
@@ -394,10 +395,10 @@ func TestWithMaxDepth(t *testing.T) {
 	}
 }
 
-// mustRole creates a role with optional parents.
-func mustRole(t *testing.T, e *Enforcer, name model.RoleName, perms []model.Permission, parents ...model.RoleName) {
+// mustRole creates a role with a parent ("" for none).
+func mustRole(t *testing.T, e *Enforcer, name model.RoleName, perms []model.Permission, parent model.RoleName) {
 	t.Helper()
-	if err := e.CreateRole(name, perms, parents...); err != nil {
+	if err := e.CreateRole(name, perms, parent); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -415,16 +416,16 @@ func TestEmptyAndDuplicateNames(t *testing.T) {
 		t.Errorf("duplicate user: got %v", err)
 	}
 
-	if err := e.CreateRole("", nil); !errors.Is(err, store.ErrEmptyName) {
+	if err := e.CreateRole("", nil, ""); !errors.Is(err, store.ErrEmptyName) {
 		t.Errorf("empty role name: got %v", err)
 	}
-	if err := e.UpdateRole("", nil); !errors.Is(err, store.ErrEmptyName) {
+	if err := e.UpdateRole("", nil, ""); !errors.Is(err, store.ErrEmptyName) {
 		t.Errorf("empty role name on update: got %v", err)
 	}
-	if err := e.CreateRole("dup-role", nil); err != nil {
+	if err := e.CreateRole("dup-role", nil, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.CreateRole("dup-role", nil); !errors.Is(err, store.ErrRoleExists) {
+	if err := e.CreateRole("dup-role", nil, ""); !errors.Is(err, store.ErrRoleExists) {
 		t.Errorf("duplicate role: got %v", err)
 	}
 }
@@ -436,44 +437,55 @@ func TestCreateRoleWithUnknownParent(t *testing.T) {
 	}
 }
 
-func TestAddParent(t *testing.T) {
+func TestSetParent(t *testing.T) {
 	e := New()
-	if err := e.CreateRole("a", nil); err != nil {
+	if err := e.CreateRole("a", nil, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.CreateRole("b", nil); err != nil {
+	if err := e.CreateRole("b", nil, ""); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := e.AddParent("a", "b"); err != nil {
+	if err := e.SetParent("a", "b"); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.AddParent("a", "b"); err != nil {
-		t.Error("re-adding an existing parent must be a no-op")
+	if err := e.SetParent("a", "b"); err != nil {
+		t.Error("re-setting the same parent must be a no-op")
 	}
-	if r, _ := e.GetRole("a"); len(r.Parents) != 1 {
-		t.Errorf("a should have exactly one parent, got %v", r.Parents)
+	if r, _ := e.GetRole("a"); r.Parent != "b" {
+		t.Errorf("a's parent should be b, got %q", r.Parent)
 	}
 
-	if err := e.AddParent("ghost", "a"); !errors.Is(err, store.ErrRoleNotFound) {
+	// An empty parent detaches the role from its inheritance chain.
+	if err := e.SetParent("a", ""); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := e.GetRole("a"); r.Parent != "" {
+		t.Errorf("a should have no parent, got %q", r.Parent)
+	}
+	if err := e.SetParent("a", "b"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := e.SetParent("ghost", "a"); !errors.Is(err, store.ErrRoleNotFound) {
 		t.Errorf("unknown role: got %v", err)
 	}
-	if err := e.AddParent("a", "ghost"); !errors.Is(err, store.ErrRoleNotFound) {
+	if err := e.SetParent("a", "ghost"); !errors.Is(err, store.ErrRoleNotFound) {
 		t.Errorf("unknown parent: got %v", err)
 	}
 
 	// a already inherits from b; making b inherit from a closes a cycle.
-	if err := e.AddParent("b", "a"); !errors.Is(err, ErrCyclicInheritance) {
+	if err := e.SetParent("b", "a"); !errors.Is(err, ErrCyclicInheritance) {
 		t.Errorf("cycle must be rejected: got %v", err)
 	}
 }
 
 func TestUpdateRoleCycleRejection(t *testing.T) {
 	e := New()
-	if err := e.CreateRole("a", nil); err != nil {
+	if err := e.CreateRole("a", nil, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.CreateRole("b", nil); err != nil {
+	if err := e.CreateRole("b", nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.UpdateRole("a", nil, "b"); err != nil {
@@ -483,17 +495,17 @@ func TestUpdateRoleCycleRejection(t *testing.T) {
 		t.Errorf("cycle must be rejected: got %v", err)
 	}
 	// The rejected update must not have been applied.
-	if b, _ := e.GetRole("b"); len(b.Parents) != 0 {
-		t.Errorf("rejected update leaked into the store: %v", b.Parents)
+	if b, _ := e.GetRole("b"); b.Parent != "" {
+		t.Errorf("rejected update leaked into the store: %q", b.Parent)
 	}
-	if err := e.UpdateRole("ghost", nil); !errors.Is(err, store.ErrRoleNotFound) {
+	if err := e.UpdateRole("ghost", nil, ""); !errors.Is(err, store.ErrRoleNotFound) {
 		t.Errorf("unknown role: got %v", err)
 	}
 }
 
 func TestGrantValidation(t *testing.T) {
 	e := New()
-	if err := e.CreateRole("r", nil); err != nil {
+	if err := e.CreateRole("r", nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.CreateUser("u"); err != nil {
