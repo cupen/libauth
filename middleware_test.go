@@ -11,6 +11,15 @@ var okHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 })
 
+// perm turns a "resource:action" string into a Permission for tests.
+func perm(s string) Permission {
+	p, err := ParsePermission(s)
+	if err != nil {
+		panic(err)
+	}
+	return p
+}
+
 func doReq(t *testing.T, h http.Handler, user string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
@@ -22,14 +31,46 @@ func doReq(t *testing.T, h http.Handler, user string) *httptest.ResponseRecorder
 	return rec
 }
 
+// newTestEnforcer builds a minimal RBAC world for the middleware tests.
+func newTestEnforcer(t *testing.T) *Enforcer {
+	t.Helper()
+	e := New()
+
+	if err := e.CreateRole("admin", []Permission{perm("*")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.CreateRole("editor", []Permission{perm("article:create"), perm("article:edit"), perm("article:read")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.CreateRole("viewer", []Permission{perm("article:read")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.CreateRole("publisher", []Permission{perm("article:publish")}, "editor"); err != nil {
+		t.Fatal(err)
+	}
+
+	users := map[string][]RoleName{
+		"alice": {"admin"},
+		"bob":   {"editor", "viewer"},
+		"carol": {"viewer"},
+		"dave":  {"publisher"},
+	}
+	for id, roles := range users {
+		if err := e.CreateUser(id, roles...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return e
+}
+
 func TestMiddlewareRequire(t *testing.T) {
-	m := newTestManager(t)
-	mw, err := NewMiddleware(m, HeaderIdentity(""))
+	e := newTestEnforcer(t)
+	mw, err := NewMiddleware(e, HeaderIdentity(""))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	handler := mw.Require("article:create")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := mw.Require(perm("article:create"))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u := UserFromContext(r.Context())
 		_, _ = w.Write([]byte("hello " + u.ID))
 	}))
@@ -49,10 +90,10 @@ func TestMiddlewareRequire(t *testing.T) {
 }
 
 func TestMiddlewareRequireAllAnyRole(t *testing.T) {
-	m := newTestManager(t)
-	mw, _ := NewMiddleware(m, nil) // nil identity -> default header
+	e := newTestEnforcer(t)
+	mw, _ := NewMiddleware(e, nil)
 
-	all := mw.RequireAll("article:create", "article:read")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	all := mw.RequireAll(perm("article:create"), perm("article:read"))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	if rec := doReq(t, all, "bob"); rec.Code != http.StatusOK {
 		t.Errorf("bob holds both: code=%d", rec.Code)
 	}
@@ -60,7 +101,7 @@ func TestMiddlewareRequireAllAnyRole(t *testing.T) {
 		t.Errorf("carol holds one: code=%d", rec.Code)
 	}
 
-	any := mw.RequireAny("article:publish", "article:read")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	any := mw.RequireAny(perm("article:publish"), perm("article:read"))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	if rec := doReq(t, any, "carol"); rec.Code != http.StatusOK {
 		t.Errorf("carol holds read: code=%d", rec.Code)
 	}
@@ -75,8 +116,8 @@ func TestMiddlewareRequireAllAnyRole(t *testing.T) {
 }
 
 func TestMiddlewareRequireAnyWithoutPermissions(t *testing.T) {
-	m := newTestManager(t)
-	mw, _ := NewMiddleware(m, nil)
+	e := newTestEnforcer(t)
+	mw, _ := NewMiddleware(e, nil)
 
 	handler := mw.RequireAny()(okHandler)
 	// Misconfiguration must fail closed with 403 — never panic.
@@ -86,8 +127,8 @@ func TestMiddlewareRequireAnyWithoutPermissions(t *testing.T) {
 }
 
 func TestMiddlewareRequireAllWithoutPermissions(t *testing.T) {
-	m := newTestManager(t)
-	mw, _ := NewMiddleware(m, nil)
+	e := newTestEnforcer(t)
+	mw, _ := NewMiddleware(e, nil)
 
 	handler := mw.RequireAll()(okHandler)
 	// Vacuously true: nothing is required, so everyone passes.
@@ -97,8 +138,8 @@ func TestMiddlewareRequireAllWithoutPermissions(t *testing.T) {
 }
 
 func TestMiddlewareRequireRoleUnknownUser(t *testing.T) {
-	m := newTestManager(t)
-	mw, _ := NewMiddleware(m, nil)
+	e := newTestEnforcer(t)
+	mw, _ := NewMiddleware(e, nil)
 
 	handler := mw.RequireRole("admin")(okHandler)
 	if rec := doReq(t, handler, "ghost"); rec.Code != http.StatusUnauthorized {
@@ -106,9 +147,9 @@ func TestMiddlewareRequireRoleUnknownUser(t *testing.T) {
 	}
 }
 
-func TestMiddlewareNewMiddlewareNilManager(t *testing.T) {
+func TestMiddlewareNewMiddlewareNilEnforcer(t *testing.T) {
 	if _, err := NewMiddleware(nil, nil); !errors.Is(err, ErrInvalidIdentityFunc) {
-		t.Errorf("nil manager should be rejected, got %v", err)
+		t.Errorf("nil enforcer should be rejected, got %v", err)
 	}
 }
 
@@ -122,18 +163,18 @@ func (f *failingStore) GetUser(id UserID) (*User, error) {
 }
 
 func TestMiddlewareInternalError(t *testing.T) {
-	m := New(WithStore(&failingStore{NewMemoryStore()}))
-	mw, _ := NewMiddleware(m, nil)
+	e := New(WithStore(&failingStore{NewMemoryStore()}))
+	mw, _ := NewMiddleware(e, nil)
 
-	handler := mw.Require("article:read")(okHandler)
+	handler := mw.Require(perm("article:read"))(okHandler)
 	if rec := doReq(t, handler, "bob"); rec.Code != http.StatusInternalServerError {
 		t.Errorf("store failure should surface as 500: code=%d", rec.Code)
 	}
 }
 
 func TestMiddlewareCustomIdentityAndOnError(t *testing.T) {
-	m := newTestManager(t)
-	mw, _ := NewMiddleware(m, func(r *http.Request) (UserID, error) {
+	e := newTestEnforcer(t)
+	mw, _ := NewMiddleware(e, func(r *http.Request) (UserID, error) {
 		return r.Header.Get("Authorization"), nil
 	})
 	called := false
@@ -142,7 +183,7 @@ func TestMiddlewareCustomIdentityAndOnError(t *testing.T) {
 		w.WriteHeader(status)
 	}
 
-	handler := mw.Require("article:read")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	handler := mw.Require(perm("article:read"))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Authorization", "carol")
 	rec := httptest.NewRecorder()

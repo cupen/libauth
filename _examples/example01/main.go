@@ -1,8 +1,7 @@
-// Command example demonstrates the libauth multi-role permission system with
-// a small HTTP API.
+// Command example demonstrates libauth with a small HTTP API.
 //
-// Identities are supplied via the X-User-ID header (see HeaderIdentity) — in
-// production you would plug in JWT/session authentication instead.
+// Identities are supplied via the X-User-ID header (see HeaderIdentity);
+// plug in JWT/session authentication in production.
 //
 // Seeded accounts:
 //
@@ -11,9 +10,7 @@
 //	carol — viewer                      (read only)
 //	dave  — publisher (inherits editor) (role inheritance)
 //
-// Try:
-//
-//	go run ./cmd/example
+//	go run ./_examples/example01
 //	curl -H "X-User-ID: alice" localhost:8080/articles          # 200
 //	curl -X POST -H "X-User-ID: bob" localhost:8080/articles    # 201
 //	curl -X POST -H "X-User-ID: carol" localhost:8080/articles  # 403
@@ -27,7 +24,7 @@ import (
 	"strconv"
 	"sync"
 
-	libauth "libauth"
+	libauth "github.com/cupen/libauth"
 )
 
 type article struct {
@@ -51,48 +48,52 @@ func main() {
 	s := &server{articles: map[int]article{}, nextID: 1}
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /whoami", mw.Require("whoami:read")(http.HandlerFunc(s.whoami)))
-	mux.Handle("GET /articles", mw.Require("article:read")(http.HandlerFunc(s.list)))
-	mux.Handle("POST /articles", mw.Require("article:create")(http.HandlerFunc(s.create)))
-	mux.Handle("DELETE /articles/{id}", mw.Require("article:delete")(http.HandlerFunc(s.remove)))
+	mux.Handle("GET /whoami", mw.Require(libauth.Permission{Resource: "whoami", Action: "read"})(http.HandlerFunc(s.whoami)))
+	mux.Handle("GET /articles", mw.Require(libauth.Permission{Resource: "article", Action: "read"})(http.HandlerFunc(s.list)))
+	mux.Handle("POST /articles", mw.Require(libauth.Permission{Resource: "article", Action: "create"})(http.HandlerFunc(s.create)))
+	mux.Handle("DELETE /articles/{id}", mw.Require(libauth.Permission{Resource: "article", Action: "delete"})(http.HandlerFunc(s.remove)))
 	// Multi-permission and role-based guards are also available:
-	//   mux.Handle("POST /publish", mw.RequireAll("article:edit", "article:publish")(...))
+	//   mux.Handle("POST /publish", mw.RequireAll(perms...)(...))
 	//   mux.Handle("GET /audit",    mw.RequireRole("admin")(...))
 
-	addr := "localhost:8080"
-	log.Printf("listening on http://%s (identify via X-User-ID header)", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	log.Printf("listening on http://localhost:8080 (identify via X-User-ID header)")
+	log.Fatal(http.ListenAndServe("localhost:8080", mux))
 }
 
-// seed builds the demo RBAC world.
-func seed() *libauth.Manager {
+func seed() *libauth.Enforcer {
 	m := libauth.New()
 
-	// Roles.
-	if err := m.CreateRole("admin", []libauth.Permission{"*"}); err != nil {
-		log.Fatal(err)
-	}
-	if err := m.CreateRole("editor", []libauth.Permission{
-		"article:create", "article:edit", "article:read", "whoami:read",
-	}); err != nil {
-		log.Fatal(err)
-	}
-	if err := m.CreateRole("viewer", []libauth.Permission{"article:read", "whoami:read"}); err != nil {
-		log.Fatal(err)
-	}
-	// publisher inherits every editor permission.
-	if err := m.CreateRole("publisher", []libauth.Permission{"article:publish"}, "editor"); err != nil {
-		log.Fatal(err)
+	for _, r := range []struct {
+		name        string
+		permissions []libauth.Permission
+		parents     []libauth.RoleName
+	}{
+		{"admin", []libauth.Permission{{Resource: "*"}}, nil},
+		{"editor", []libauth.Permission{
+			{Resource: "article", Action: "create"},
+			{Resource: "article", Action: "edit"},
+			{Resource: "article", Action: "read"},
+			{Resource: "whoami", Action: "read"},
+		}, nil},
+		{"viewer", []libauth.Permission{
+			{Resource: "article", Action: "read"},
+			{Resource: "whoami", Action: "read"},
+		}, nil},
+		{"publisher", []libauth.Permission{
+			{Resource: "article", Action: "publish"},
+		}, []libauth.RoleName{"editor"}},
+	} {
+		if err := m.CreateRole(r.name, r.permissions, r.parents...); err != nil {
+			log.Fatal(err)
+		}
 	}
 
-	// Users, each possibly holding multiple roles.
-	users := map[string][]libauth.RoleName{
+	for id, roles := range map[string][]libauth.RoleName{
 		"alice": {"admin"},
 		"bob":   {"editor", "viewer"},
 		"carol": {"viewer"},
 		"dave":  {"publisher"},
-	}
-	for id, roles := range users {
+	} {
 		if err := m.CreateUser(id, roles...); err != nil {
 			log.Fatal(err)
 		}
@@ -106,7 +107,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// whoami shows the caller's roles and effective permissions.
 func (s *server) whoami(w http.ResponseWriter, r *http.Request) {
 	u := libauth.UserFromContext(r.Context())
 	if u == nil {

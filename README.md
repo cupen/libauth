@@ -20,7 +20,7 @@ package main
 
 import (
     "fmt"
-    "libauth"
+    "github.com/cupen/libauth"
 )
 
 func main() {
@@ -68,7 +68,7 @@ func main() {
 
 ## API 概览
 
-`Manager`（见 [rbac.go](rbac.go)）：
+`Enforcer`（见 [authz/authz.go](authz/authz.go)）—— RBAC 编排层，把 Store 与领域规则揉到一起给出"允许/拒绝"的答案：
 
 - 用户：`CreateUser` / `DeleteUser` / `GetUser` / `ListUsers`
 - 角色分配：`AssignRole` / `RevokeRole` / `RolesFor`（含继承链）
@@ -76,8 +76,9 @@ func main() {
 - 权限：`GrantPermission` / `RevokePermission`（角色）；`GrantDirectPermission` / `RevokeDirectPermission`（用户直授）
 - 检查：`Check`（返回错误）、`HasPermission`、`HasAllPermissions`、`HasAnyPermission`、`HasRole` / `HasAnyRole` / `HasAllRoles`
 - 汇总：`PermissionsFor`（用户的有效权限全集，去重排序）
+- 构造：`libauth.New()`，可选 `libauth.WithStore(s)`、`libauth.WithMaxDepth(n)`
 
-`Store` 接口（见 [store.go](store.go)）定义了持久化契约，内置 `MemoryStore` 是参考实现；接入 MySQL/Postgres 时实现该接口并通过 `libauth.New(libauth.WithStore(myStore))` 注入。
+`Store` 接口（见 [store/store.go](store/store.go)）定义了持久化契约，内置 `MemoryStore` 是参考实现；接入 MySQL/Postgres 时实现该接口并通过 `libauth.New(libauth.WithStore(myStore))` 注入。
 
 ## HTTP 中间件
 
@@ -99,34 +100,55 @@ mux.Handle("GET /audit", mw.RequireRole("admin")(http.HandlerFunc(audit)))
 - 身份失败（无 `X-User-ID`）或用户不存在 → `401`
 - 已认证但缺权限 → `403`（`*PermissionDeniedError`，可用 `errors.Is(err, libauth.ErrPermissionDenied)` 匹配）
 - 通过校验后，`libauth.UserFromContext(r.Context())` 可取回 `*User`
-- 自定义响应：设置 `mw.OnError`；自定义身份来源（如 JWT）：传入自己的 `IdentityFunc`
+- 自定义响应：设置 `mw.OnError`；自定义身份来源（如 JWT）：传入自己的 `IdentityFunc`；自定义权限来源：`NewMiddleware` 接受任何满足 `Authorizer` 接口的实现（`*Enforcer` 开箱即用，见 [middleware/middleware.go](middleware/middleware.go)）
 
 ## 目录结构
 
 ```
 libauth/
-├── model.go               # User / Role / Permission 与通配符匹配
-├── errors.go              # 哨兵错误与 PermissionDeniedError
-├── store.go               # Store 持久化接口
-├── store_memory.go        # 线程安全内存存储（参考实现）
-├── rbac.go                # Manager：多角色、继承解析、权限检查
-├── middleware.go          # net/http 中间件
-├── libauth_test.go        # 核心单元测试
-├── model_test.go          # Permission/Role 单元测试
-├── store_memory_test.go   # 内存存储单元测试（CRUD/副本/幂等）
-├── manager_test.go        # 管理器单元测试（选项/校验/边界）
-├── middleware_test.go     # 中间件单元测试
-├── example_test.go        # godoc 示例（go test 验证输出）
-├── examples/              # 独立演示程序
-│   ├── basic/             # 无 HTTP 的核心流程演示
-│   └── customstore/       # 自定义 JSON 文件存储演示
-└── cmd/example/           # 可运行的 HTTP 演示服务
+├── libauth.go              # 包入口：所有公共类型的别名再导出（API 兼容层）
+├── errors.go               # 哨兵错误再导出（按来源聚合）
+├── middleware.go           # 中间件再导出（兼容层，签名不变）
+├── authz/                  # Enforcer 子包（RBAC 编排层）
+│   ├── authz.go            #   Enforcer 结构、New、WithStore、WithMaxDepth
+│   ├── users.go            #   用户 CRUD、角色分配、直接授权
+│   ├── roles.go            #   角色 CRUD、权限管理、父角色
+│   ├── resolve.go          #   继承链与有效权限解析
+│   ├── check.go            #   角色/权限检查
+│   ├── validate.go         #   继承环与深度校验
+│   ├── errors.go           #   ErrCyclicInheritance / ErrInheritanceDepth
+│   └── enforcer_test.go
+├── model/                  # 核心数据类型子包（纯数据，无持久化/HTTP 依赖）
+│   ├── user.go             #   User / UserID
+│   ├── role.go             #   Role / RoleName 与继承辅助方法
+│   ├── permission.go       #   Permission 与通配符匹配
+│   ├── errors.go           #   PermissionDeniedError / ErrPermissionDenied / ErrInvalidPermission
+│   └── model_test.go
+├── store/                  # 存储层子包
+│   ├── store.go            # Store 持久化接口
+│   ├── errors.go           # 存储级哨兵错误
+│   ├── memory.go           # 线程安全内存存储（参考实现）
+│   ├── memory_users.go     #   用户部分
+│   ├── memory_roles.go     #   角色部分
+│   └── memory_test.go
+├── middleware/             # HTTP 守卫子包（依赖 Authorizer 接口，不依赖 Enforcer）
+│   ├── middleware.go       #   Authorizer、Middleware、NewMiddleware 与内部辅助
+│   ├── require.go          #   Require / RequireAll / RequireAny / RequireRole
+│   ├── identity.go         #   IdentityFunc / HeaderIdentity
+│   ├── context.go          #   WithUser / UserFromContext
+│   └── middleware_test.go
+├── middleware_test.go      # 中间件集成测试（根包层）
+├── example_test.go         # godoc 示例（go test 验证输出）
+└── _examples/              # 独立演示程序（下划线前缀，go ./... 不扫描）
+    ├── basic/              # 无 HTTP 的核心流程演示
+    ├── customstore/        # 自定义 JSON 文件存储演示
+    └── example01/          # 可运行的 HTTP 演示服务
 ```
 
 ## 运行演示
 
 ```bash
-make run            # 或 go run ./cmd/example
+make run            # 或 go run ./_examples/example01
 
 # alice 是 admin，可以删除
 curl -X DELETE -H "X-User-ID: alice" localhost:8080/articles/1
@@ -143,9 +165,9 @@ curl -H "X-User-ID: bob" localhost:8080/whoami
 | 位置 | 内容 |
 |---|---|
 | [example_test.go](example_test.go) | 可运行的 godoc 示例，`go test` 会实际执行并验证输出：多角色并集、角色继承、通配符、动态授权、直接授权、`Check` 错误处理、中间件 |
-| [examples/basic](examples/basic/main.go) | 无 HTTP 的核心流程演示：定义角色 → 多角色用户 → 权限检查 → 运行时授权调整，`go run ./examples/basic` |
-| [examples/customstore](examples/customstore/main.go) | 通过实现 `Store` 接口接入 JSON 文件持久化，演示"建库 → 重启 → 从磁盘恢复"的完整流程，`go run ./examples/customstore` |
-| [cmd/example](cmd/example/main.go) | HTTP 演示服务（`make run`），含 `/whoami`、文章 CRUD 等受保护端点 |
+| [_examples/basic](_examples/basic/main.go) | 无 HTTP 的核心流程演示：定义角色 → 多角色用户 → 权限检查 → 运行时授权调整，`go run ./_examples/basic` |
+| [_examples/customstore](_examples/customstore/main.go) | 通过实现 `Store` 接口接入 JSON 文件持久化，演示"建库 → 重启 → 从磁盘恢复"的完整流程，`go run ./_examples/customstore` |
+| [_examples/example01](_examples/example01/main.go) | HTTP 演示服务（`make run`），含 `/whoami`、文章 CRUD 等受保护端点 |
 
 ## 开发
 

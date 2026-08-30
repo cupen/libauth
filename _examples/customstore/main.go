@@ -1,11 +1,12 @@
 // Command customstore shows how to plug a custom persistence layer into
 // libauth by implementing the Store interface. This demo persists the RBAC
-// world to a JSON file: it builds roles and users through one manager, then
-// reloads the same file into a second, independent manager.
+// world to a JSON file: it builds roles and users through one enforcer, then
+// reloads the same file into a second, independent enforcer.
 //
-// Run it with:
+// Note how thin the Store implementation is: the contract only covers
+// whole-object CRUD — relationship mutations are handled by authz.Enforcer.
 //
-//	go run ./examples/customstore
+//	go run ./_examples/customstore
 package main
 
 import (
@@ -15,25 +16,22 @@ import (
 	"os"
 	"path/filepath"
 
-	"libauth"
+	"github.com/cupen/libauth"
 )
 
-// fileStore persists the RBAC world as JSON after every mutation. The
-// in-memory bookkeeping is delegated to an embedded MemoryStore; a production
-// store would implement the same Store interface directly against a database.
+// fileStore persists the RBAC world as JSON after every mutation. A
+// production store would implement Store directly against a database.
 type fileStore struct {
 	*libauth.MemoryStore
 	path string
 }
 
-// newFileStore opens (and hydrates from) a JSON file, starting empty when the
-// file does not exist yet.
 func newFileStore(path string) (*fileStore, error) {
 	fs := &fileStore{MemoryStore: libauth.NewMemoryStore(), path: path}
 
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return fs, nil // first run
+		return fs, nil
 	}
 	if err != nil {
 		return nil, err
@@ -59,7 +57,6 @@ func newFileStore(path string) (*fileStore, error) {
 	return fs, nil
 }
 
-// save serializes the current world; called after every successful mutation.
 func (fs *fileStore) save() error {
 	users, err := fs.MemoryStore.ListUsers()
 	if err != nil {
@@ -79,8 +76,8 @@ func (fs *fileStore) save() error {
 	return os.WriteFile(fs.path, raw, 0o600)
 }
 
-// Read operations (GetUser, ListUsers, GetRole, ListRoles) are inherited from
-// the embedded MemoryStore; every mutation below writes through to disk.
+// Read operations are inherited from the embedded MemoryStore; each mutation
+// writes through to disk.
 
 func (fs *fileStore) CreateUser(u *libauth.User) error {
 	if err := fs.MemoryStore.CreateUser(u); err != nil {
@@ -89,36 +86,15 @@ func (fs *fileStore) CreateUser(u *libauth.User) error {
 	return fs.save()
 }
 
+func (fs *fileStore) UpdateUser(u *libauth.User) error {
+	if err := fs.MemoryStore.UpdateUser(u); err != nil {
+		return err
+	}
+	return fs.save()
+}
+
 func (fs *fileStore) DeleteUser(id libauth.UserID) error {
 	if err := fs.MemoryStore.DeleteUser(id); err != nil {
-		return err
-	}
-	return fs.save()
-}
-
-func (fs *fileStore) AssignRole(id libauth.UserID, role libauth.RoleName) error {
-	if err := fs.MemoryStore.AssignRole(id, role); err != nil {
-		return err
-	}
-	return fs.save()
-}
-
-func (fs *fileStore) RevokeRole(id libauth.UserID, role libauth.RoleName) error {
-	if err := fs.MemoryStore.RevokeRole(id, role); err != nil {
-		return err
-	}
-	return fs.save()
-}
-
-func (fs *fileStore) GrantUserPermission(id libauth.UserID, p libauth.Permission) error {
-	if err := fs.MemoryStore.GrantUserPermission(id, p); err != nil {
-		return err
-	}
-	return fs.save()
-}
-
-func (fs *fileStore) RevokeUserPermission(id libauth.UserID, p libauth.Permission) error {
-	if err := fs.MemoryStore.RevokeUserPermission(id, p); err != nil {
 		return err
 	}
 	return fs.save()
@@ -145,20 +121,6 @@ func (fs *fileStore) DeleteRole(name libauth.RoleName) error {
 	return fs.save()
 }
 
-func (fs *fileStore) GrantPermission(role libauth.RoleName, p libauth.Permission) error {
-	if err := fs.MemoryStore.GrantPermission(role, p); err != nil {
-		return err
-	}
-	return fs.save()
-}
-
-func (fs *fileStore) RevokePermission(role libauth.RoleName, p libauth.Permission) error {
-	if err := fs.MemoryStore.RevokePermission(role, p); err != nil {
-		return err
-	}
-	return fs.save()
-}
-
 func main() {
 	dir, err := os.MkdirTemp("", "libauth-customstore-*")
 	if err != nil {
@@ -168,17 +130,21 @@ func main() {
 	path := filepath.Join(dir, "rbac.json")
 	fmt.Println("data file:", path)
 
-	// ---- first run: seed the world through the file-backed store ----------
 	store, err := newFileStore(path)
 	if err != nil {
 		panic(err)
 	}
 	m := libauth.New(libauth.WithStore(store))
-	must(m.CreateRole("editor", []libauth.Permission{"article:create", "article:read"}))
-	must(m.CreateRole("viewer", []libauth.Permission{"article:read", "whoami:read"}))
+	must(m.CreateRole("editor", []libauth.Permission{
+		{Resource: "article", Action: "create"},
+		{Resource: "article", Action: "read"},
+	}))
+	must(m.CreateRole("viewer", []libauth.Permission{
+		{Resource: "article", Action: "read"},
+		{Resource: "whoami", Action: "read"},
+	}))
 	must(m.CreateUser("bob", "editor", "viewer"))
 
-	// ---- second run: a fresh manager hydrates from the same JSON file -----
 	reloaded, err := newFileStore(path)
 	if err != nil {
 		panic(err)
@@ -195,8 +161,10 @@ func main() {
 		fmt.Printf("  user %-8s roles=%v\n", u.ID, u.Roles)
 	}
 
-	fmt.Println("\nbob may still create articles:", m2.Check("bob", "article:create") == nil)
-	fmt.Println("dave is unknown after reload:", m2.Check("dave", "article:read"))
+	bobOK := libauth.Permission{Resource: "article", Action: "create"}
+	daveOK := libauth.Permission{Resource: "article", Action: "read"}
+	fmt.Println("\nbob may still create articles:", m2.Check("bob", bobOK) == nil)
+	fmt.Println("dave is unknown after reload:", m2.Check("dave", daveOK))
 }
 
 func must(err error) {

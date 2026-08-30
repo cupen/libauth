@@ -7,14 +7,14 @@ test: vet
 	go test ./... -race
 
 build:
-	go build -o bin/example ./cmd/example
+	go build -o bin/example ./_examples/example01
 
 examples:
-	go build -o bin/examples-basic ./examples/basic
-	go build -o bin/examples-customstore ./examples/customstore
+	go build -o bin/examples-basic ./_examples/basic
+	go build -o bin/examples-customstore ./_examples/customstore
 
 run:
-	go run ./cmd/example
+	go run ./_examples/example01
 
 clean:
 	rm -rf bin
