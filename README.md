@@ -145,31 +145,31 @@ mw, _ := libauth.NewMiddleware(m, identity)
 | 规模 | 命中 | 冷启 |
 |---|---|---|
 | 单用户 + `*`(参照点) | **22 ns/op**,0 allocs | 1.0 µs/op,15 allocs |
-| 100 角色 × 10 权限(1 000 grants) | 54 ns/op,0 allocs | 129 µs/op,917 allocs |
-| 100 角色 × 100 权限(10 000 grants) | 54 ns/op,0 allocs | 1.06 ms/op,1517 allocs |
-| 1000 角色 × 10 权限(10 000 grants) | 61 ns/op,0 allocs | 1.80 ms/op,9030 allocs |
-| 1000 角色 × 100 权限(100 000 grants) | 61 ns/op,0 allocs | 11.13 ms/op,15 030 allocs |
+| 100 角色 × 10 权限(1 000 grants) | 51 ns/op,0 allocs | 132 µs/op,917 allocs |
+| 100 角色 × 100 权限(10 000 grants) | 54 ns/op,0 allocs | 1.08 ms/op,1517 allocs |
+| 1000 角色 × 10 权限(10 000 grants) | 62 ns/op,0 allocs | 1.83 ms/op,9030 allocs |
+| 1000 角色 × 100 权限(100 000 grants) | 61 ns/op,0 allocs | 11.4 ms/op,15 030 allocs |
 
-关键观察:命中与规模几乎无关(100×100 与 1000×100 都是 ~60 ns,因为是一次 map 查找)、命中路径 0 allocs、冷启随规模线性(主要开销在 store 读 + 继承链解析 + `grantedSet` 构造)。
+关键观察:命中与规模几乎无关(50–62 ns,因为是一次 map 查找)、命中路径 0 allocs、冷启随规模线性(主要开销在 store 读 + 继承链解析 + `grantedSet` 构造)。
 
-数字采集:AMD Ryzen 7 3700X,Go 1.24,`-benchtime=1s`,Linux/amd64。复现:
+数字采集:AMD Ryzen 7 3700X,Go 1.25,`-benchtime=3s`,Linux/amd64。复现:
 
 ```bash
-make bench    # go test -bench=. -benchmem -benchtime=1s -run=^$ ./authz
+make bench    # authz / jwt / branca 三个包一起跑
 ```
 
-`jwt` 和 `branca` 包也各有热路径基准,载荷是典型身份 claim(`{"sub":"user-1234","scope":"read write",...}`,约 80 字节):
+`jwt` 和 `branca` 包也有热路径基准,载荷是典型身份 claim(`{"sub":"user-1234","scope":"read write","org":"acme"}`,约 80 字节):
 
 | 操作 | HS256 | EdDSA | Branca |
 |---|---|---|---|
-| 签发(`Sign` / `Encode`) | ~10 µs | ~25 µs | ~9 µs |
-| 校验(`Verify` / `Decode`) | ~10 µs | ~62 µs | ~5 µs |
-| ~1 KiB 载荷的校验 | ~5.6 ms | — | ~0.1 ms |
+| 签发(`Sign` / `Encode`) | 9.4 µs | 25.8 µs | 7.8 µs |
+| 校验(`Verify` / `Decode`) | 10.2 µs | 63.2 µs | 5.4 µs |
+| ~1 KiB 载荷的校验 | 5.8 ms | — | 0.11 ms |
 
 观察:
 
-- **HS256 与 Branca 校验同量级**(~5–10 µs),均适合每次请求都验签。EdDSA 校验 ~62 µs,来自 Ed25519 验签本身的成本;若校验是热路径瓶颈,改用 HS256。
-- **Branca 签发稍贵于 HS256**(多了 XChaCha20-Poly1305 的密钥调度与认证标签计算),仍在同一量级。
+- **HS256 与 Branca 校验同量级**(~5–10 µs),均适合每次请求都验签。EdDSA 校验 63 µs,主要来自 Ed25519 验签本身的成本;若校验是热路径瓶颈,改用 HS256。
+- **Branca 签发比 HS256 快约 17%**(密文不需要 base64 编码、JWT 头部不需要 JSON 序列化),EdDSA 签发 26 µs 比 HS256 慢约 2.7×,但仍是每次请求可承受的成本。
 - **大载荷下 Branca 比 HS256 快 ~50 倍**:JWT 是 base64 明文,1 KiB claim 反序列化在 `encoding/json` 里要走一遍;Branca 是密文,AEAD 解密是定长操作。这是「载荷不透明」换来的实际收益——如果你的 token 要带不少业务字段,这是选 Branca 的硬理由。
 
 ## 运行演示
