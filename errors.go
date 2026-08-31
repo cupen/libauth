@@ -36,7 +36,6 @@ var (
 	ErrIssuerMismatch      = jwt.ErrIssuerMismatch
 	ErrAudienceMismatch    = jwt.ErrAudienceMismatch
 	ErrInvalidKey          = jwt.ErrInvalidKey
-	ErrTokenWithoutSubject = jwt.ErrTokenWithoutSubject
 )
 
 type PermissionDeniedError = model.PermissionDeniedError

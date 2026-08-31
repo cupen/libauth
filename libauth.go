@@ -12,8 +12,9 @@
 // Stateless identity tokens come in two flavours: signed JWTs in the jwt
 // subpackage (HS256 / Ed25519, stdlib only) and encrypted branca tokens in
 // the branca subpackage (XChaCha20-Poly1305, golang.org/x/crypto). Both
-// expose VerifyBearer, which libauth.BearerIdentity wires into the
-// middleware as an identity source.
+// expose Encode / Decode; the middleware takes a plain net/http
+// IdentityFunc that performs whatever token verification the deployment
+// needs (typically extracting the bearer token and reading its sub claim).
 package libauth
 
 import (

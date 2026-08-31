@@ -56,8 +56,4 @@ var (
 
 	// ErrInvalidKey means the key material has the wrong shape or size.
 	ErrInvalidKey = errors.New("libauth: invalid key")
-
-	// ErrTokenWithoutSubject means a verified token carries no sub claim,
-	// so it names no user.
-	ErrTokenWithoutSubject = errors.New("libauth: token has no sub claim")
 )

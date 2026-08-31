@@ -26,8 +26,7 @@
 // Use HS256 when the issuer and every verifier live in one trust boundary
 // and can share a secret; use EdDSA when several services must verify
 // tokens that only the issuer can create (verifiers hold the public key
-// only). libauth.BearerIdentity wires a Verifier straight into the HTTP
-// middleware as an identity source.
+// only).
 package jwt
 
 import (
@@ -302,18 +301,4 @@ func (v *Verifier) validate(c *Claims) error {
 func typIsJWT(typ string) bool {
 	t := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(typ)), "application/")
 	return t == "jwt"
-}
-
-// VerifyBearer verifies token and returns the user ID its sub claim names —
-// the adapter libauth.BearerIdentity expects. Tokens without a usable sub
-// claim fail with ErrTokenWithoutSubject.
-func (v *Verifier) VerifyBearer(token string) (string, error) {
-	claims, err := v.Verify(token)
-	if err != nil {
-		return "", err
-	}
-	if claims.Subject == "" {
-		return "", ErrTokenWithoutSubject
-	}
-	return claims.Subject, nil
 }

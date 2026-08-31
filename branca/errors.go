@@ -2,8 +2,8 @@ package branca
 
 import "errors"
 
-// Sentinel errors returned by sealing and opening. Errors from Open wrap
-// one of these, so callers branch with errors.Is:
+// Sentinel errors returned by Decode. Errors wrap one of these, so
+// callers branch with errors.Is:
 //
 //	if errors.Is(err, branca.ErrTokenExpired) { ... }
 var (
@@ -17,17 +17,9 @@ var (
 	ErrTokenInvalid = errors.New("libauth: token failed authentication")
 
 	// ErrTokenExpired means the token's (authenticated) timestamp plus the
-	// TTL passed to Open lies in the past. The check runs after successful
-	// decryption, as the spec requires.
+	// TTL passed to Decode lies in the past. The check runs after
+	// successful decryption, as the spec requires.
 	ErrTokenExpired = errors.New("libauth: token has expired")
-
-	// ErrTokenWithoutSubject means a token's payload has no "sub" member,
-	// so it names no user.
-	ErrTokenWithoutSubject = errors.New("libauth: token has no sub claim")
-
-	// ErrMissingTTL is returned by VerifyBearer when the codec has no TTL
-	// configured. Bearer tokens must not be accepted without an age bound.
-	ErrMissingTTL = errors.New("libauth: bearer verification requires a TTL (configure WithTTL)")
 
 	// ErrInvalidKey means the key is not exactly 32 bytes.
 	ErrInvalidKey = errors.New("libauth: invalid key")

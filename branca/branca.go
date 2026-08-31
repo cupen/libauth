@@ -22,19 +22,13 @@
 //	token, err := b.Encode(Session{Sub: "bob"})
 //
 //	var session Session
-//	err = b.Decode(token, 30*time.Minute, &session)
+//	tok, err := b.Decode(token, 30*time.Minute, &session)
+//	_ = tok.Timestamp // from the authenticated header
 //
-// Payloads are the caller's business — raw bytes in any format. Typed
-// payloads encode themselves with the standard library
-// encoding.BinaryMarshaler and encoding.BinaryUnmarshaler pair (see
-// Payload); the payload type travels in the values, so no generic
-// parameters are needed anywhere. Seal and Open handle raw bytes directly.
-//
-// VerifyBearer reads the "sub" member of a JSON payload and plugs straight
-// into libauth.BearerIdentity:
-//
-//	// in the middleware:
-//	libauth.BearerIdentity(b)
+// Payloads are the caller's business — anything implementing the standard
+// library encoding.BinaryMarshaler / encoding.BinaryUnmarshaler pair. The
+// payload type travels in the value, so no generic parameters are needed.
+// Raw byte payloads can use Bytes directly.
 //
 // Choose branca over jwt when the payload must stay confidential and one
 // shared key already covers the whole trust domain; choose jwt (HS256 or
@@ -43,11 +37,9 @@
 package branca
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -67,17 +59,35 @@ const (
 	minTokenLen = headerSize + tagSize
 )
 
-// Clock returns the current time. Inject one via WithNow to make sealing
+// Clock returns the current time. Inject one via WithNow to make encoding
 // and age checks deterministic (mostly for tests).
 type Clock func() time.Time
 
-// Token is an opened branca token.
+// Token is the decoded form of a branca token. Timestamp comes from the
+// authenticated header. Payload is the decrypted bytes; Decode hands it
+// to the unmarshaler for you but also exposes it for callers that want
+// the raw bytes.
 type Token struct {
-	// Payload is the decrypted bytes the token was sealed with.
-	Payload []byte
-
-	// Timestamp is the creation time carried in the authenticated header.
+	Token     string
 	Timestamp time.Time
+	Payload   []byte
+}
+
+// Bytes is a raw-byte payload — a convenience for callers that do not have
+// a typed encoding.BinaryMarshaler:
+//
+//	token, _ := b.Encode(branca.Bytes("Hello world!"))
+//	var got branca.Bytes
+//	b.Decode(token, 0, &got)  // got == "Hello world!"
+type Bytes []byte
+
+// MarshalBinary implements encoding.BinaryMarshaler.
+func (b Bytes) MarshalBinary() ([]byte, error) { return b, nil }
+
+// UnmarshalBinary implements encoding.BinaryUnmarshaler.
+func (b *Bytes) UnmarshalBinary(raw []byte) error {
+	*b = append((*b)[:0], raw...)
+	return nil
 }
 
 // Payload is the pair of standard library interfaces typed payloads
@@ -91,11 +101,10 @@ type Payload interface {
 	encoding.BinaryUnmarshaler
 }
 
-// Branca seals and opens branca tokens with one 32-byte key. A Branca is
-// safe for concurrent use.
+// Branca encodes and decodes branca tokens with one 32-byte key. A Branca
+// is safe for concurrent use.
 type Branca struct {
 	key  []byte
-	ttl  time.Duration
 	now  Clock
 	rand io.Reader
 }
@@ -103,13 +112,8 @@ type Branca struct {
 // Option customises a Branca.
 type Option func(*Branca)
 
-// WithTTL sets the token age VerifyBearer accepts. VerifyBearer refuses to
-// run without it: bearer tokens must not be open-ended. Seal and Open are
-// unaffected — their TTL is a per-call argument.
-func WithTTL(d time.Duration) Option { return func(b *Branca) { b.ttl = d } }
-
-// WithNow overrides the clock used for sealing and age checks. nil restores
-// time.Now. Mostly useful in tests.
+// WithNow overrides the clock used for encoding and age checks. nil
+// restores time.Now. Mostly useful in tests.
 func WithNow(now Clock) Option {
 	return func(b *Branca) {
 		if now != nil {
@@ -146,9 +150,37 @@ func New(key []byte, opts ...Option) (*Branca, error) {
 	return b, nil
 }
 
-// Seal encrypts the payload (which may be empty) and returns the base62
-// token. The current time is embedded in the authenticated header.
-func (b *Branca) Seal(payload []byte) (string, error) {
+// Encode encrypts v under the key and returns the resulting token. The
+// current time is embedded in the authenticated header. The payload type
+// is carried by v — no generic parameters involved.
+func (b *Branca) Encode(v encoding.BinaryMarshaler) (string, error) {
+	raw, err := v.MarshalBinary()
+	if err != nil {
+		return "", fmt.Errorf("libauth: marshal payload: %w", err)
+	}
+	return b.encodeBytes(raw)
+}
+
+// Decode verifies the token, decrypts the payload and hands it to into's
+// UnmarshalBinary. The returned Token carries the authenticated timestamp
+// and the raw payload bytes (handy for callers that want both the typed
+// value and the original bytes). Unmarshal failures surface as
+// ErrTokenMalformed. When ttl > 0, tokens whose authenticated timestamp
+// is older than ttl are rejected — after successful decryption, as the
+// spec requires. Pass 0 to skip the age check.
+func (b *Branca) Decode(token string, ttl time.Duration, into encoding.BinaryUnmarshaler) (*Token, error) {
+	tok, err := b.open(token, ttl)
+	if err != nil {
+		return nil, err
+	}
+	if err := into.UnmarshalBinary(tok.Payload); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrTokenMalformed, err)
+	}
+	return tok, nil
+}
+
+// encodeBytes encrypts an already-marshalled payload under the AEAD.
+func (b *Branca) encodeBytes(payload []byte) (string, error) {
 	nonce := make([]byte, nonceSize)
 	if _, err := io.ReadFull(b.rand, nonce); err != nil {
 		return "", fmt.Errorf("libauth: generate nonce: %w", err)
@@ -172,10 +204,10 @@ func (b *Branca) Seal(payload []byte) (string, error) {
 	return base62Encode(append(header, sealed...)), nil
 }
 
-// Open verifies and decrypts the token. When ttl > 0, tokens whose
-// authenticated timestamp is older than ttl are rejected — after successful
-// decryption, as the spec requires. Pass 0 to skip the age check.
-func (b *Branca) Open(token string, ttl time.Duration) (*Token, error) {
+// open verifies and decrypts the token, returning a fully populated Token
+// (including the decrypted payload) or one of the package's sentinel
+// errors. The TTL check, when ttl > 0, runs after successful decryption.
+func (b *Branca) open(token string, ttl time.Duration) (*Token, error) {
 	decoded, err := base62Decode(token)
 	if err != nil {
 		return nil, ErrTokenMalformed
@@ -203,75 +235,5 @@ func (b *Branca) Open(token string, ttl time.Duration) (*Token, error) {
 	if ttl > 0 && b.now().After(timestamp.Add(ttl)) {
 		return nil, fmt.Errorf("%w: issued at %s, ttl %s", ErrTokenExpired, timestamp.Format(time.RFC3339), ttl)
 	}
-	return &Token{Payload: payload, Timestamp: timestamp}, nil
-}
-
-// Encode marshals v with its MarshalBinary method and seals the bytes. The
-// payload type is carried by v — no generic parameters involved.
-func (b *Branca) Encode(v encoding.BinaryMarshaler) (string, error) {
-	raw, err := v.MarshalBinary()
-	if err != nil {
-		return "", fmt.Errorf("libauth: marshal payload: %w", err)
-	}
-	return b.Seal(raw)
-}
-
-// Decode decrypts token and hands the payload to into's UnmarshalBinary —
-// the json.Unmarshal shape, the payload type carried by the pointer you
-// pass. Unmarshal failures surface as ErrTokenMalformed. The header
-// timestamp is not returned; Open provides it.
-func (b *Branca) Decode(token string, ttl time.Duration, into encoding.BinaryUnmarshaler) error {
-	opened, err := b.Open(token, ttl)
-	if err != nil {
-		return err
-	}
-	if err := into.UnmarshalBinary(opened.Payload); err != nil {
-		return fmt.Errorf("%w: %v", ErrTokenMalformed, err)
-	}
-	return nil
-}
-
-// VerifyBearer verifies token and returns the user ID its payload names —
-// the adapter libauth.BearerIdentity expects. The payload convention is a
-// JSON object with a string "sub" member; seal it with Encode and a
-// type of your own. The Branca's WithTTL bounds the token age; without it
-// VerifyBearer returns ErrMissingTTL.
-func (b *Branca) VerifyBearer(token string) (string, error) {
-	if b.ttl <= 0 {
-		return "", ErrMissingTTL
-	}
-	opened, err := b.Open(token, b.ttl)
-	if err != nil {
-		return "", err
-	}
-	subject, err := jsonSub(opened.Payload)
-	if err != nil {
-		return "", err
-	}
-	if subject == "" {
-		return "", ErrTokenWithoutSubject
-	}
-	return subject, nil
-}
-
-// jsonSub extracts the "sub" member of an identity payload: the payload
-// must be a JSON object whose "sub", when present, is a string.
-func jsonSub(payload []byte) (string, error) {
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	var object map[string]json.RawMessage
-	if err := decoder.Decode(&object); err != nil {
-		return "", fmt.Errorf("%w: %v", ErrTokenMalformed, err)
-	}
-	if decoder.More() {
-		return "", fmt.Errorf("%w: trailing data after JSON object", ErrTokenMalformed)
-	}
-	member, ok := object["sub"]
-	if !ok {
-		return "", ErrTokenWithoutSubject
-	}
-	var subject string
-	if err := json.Unmarshal(member, &subject); err != nil {
-		return "", fmt.Errorf("%w: \"sub\" must be a string", ErrTokenMalformed)
-	}
-	return subject, nil
+	return &Token{Token: token, Timestamp: timestamp, Payload: payload}, nil
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,10 +35,35 @@ func signToken(t *testing.T, subject string, issued, expires time.Time) string {
 	return token
 }
 
-func TestBearerIdentityExtraction(t *testing.T) {
+// jwtIdentityFunc is the bearer-token glue tests attach to the middleware.
+// The same shape — extract the bearer, verify, return sub — is what
+// production code wires up (see _examples/jwtauth).
+func jwtIdentityFunc(v *jwt.Verifier) IdentityFunc {
+	return func(r *http.Request) (UserID, error) {
+		h := r.Header.Get("Authorization")
+		const prefix = "Bearer "
+		if len(h) <= len(prefix) || !strings.EqualFold(h[:len(prefix)], prefix) {
+			return "", errors.New("missing bearer token")
+		}
+		token := strings.TrimSpace(h[len(prefix):])
+		if token == "" {
+			return "", errors.New("missing bearer token")
+		}
+		claims, err := v.Verify(token)
+		if err != nil {
+			return "", err
+		}
+		if claims.Subject == "" {
+			return "", errors.New("token has no sub claim")
+		}
+		return UserID(claims.Subject), nil
+	}
+}
+
+func TestJWTIdentityExtraction(t *testing.T) {
 	v := newTestVerifier(t)
 	now := time.Now()
-	identity := BearerIdentity(v)
+	identity := jwtIdentityFunc(v)
 
 	cases := []struct {
 		name    string
@@ -48,12 +74,12 @@ func TestBearerIdentityExtraction(t *testing.T) {
 		{"valid bearer", "Bearer " + signToken(t, "bob", now, now.Add(time.Hour)), "bob", nil},
 		{"lowercase scheme", "bearer " + signToken(t, "bob", now, now.Add(time.Hour)), "bob", nil},
 		{"extra spaces", "Bearer   " + signToken(t, "bob", now, now.Add(time.Hour)) + "  ", "bob", nil},
-		{"missing header", "", "", ErrMissingBearerToken},
-		{"wrong scheme", "Basic dXNlcjpwYXNz", "", ErrMissingBearerToken},
-		{"scheme only", "Bearer", "", ErrMissingBearerToken},
-		{"empty token", "Bearer   ", "", ErrMissingBearerToken},
-		{"expired token", "Bearer " + signToken(t, "bob", now.Add(-2*time.Hour), now.Add(-time.Hour)), "", ErrTokenExpired},
-		{"forged token", "Bearer " + flipLastChar(signToken(t, "bob", now, now.Add(time.Hour))), "", ErrTokenBadSignature},
+		{"missing header", "", "", errMissingBearer},
+		{"wrong scheme", "Basic dXNlcjpwYXNz", "", errMissingBearer},
+		{"scheme only", "Bearer", "", errMissingBearer},
+		{"empty token", "Bearer   ", "", errMissingBearer},
+		{"expired token", "Bearer " + signToken(t, "bob", now.Add(-2*time.Hour), now.Add(-time.Hour)), "", jwt.ErrTokenExpired},
+		{"forged token", "Bearer " + flipLastChar(signToken(t, "bob", now, now.Add(time.Hour))), "", jwt.ErrTokenBadSignature},
 	}
 
 	for _, tc := range cases {
@@ -64,7 +90,7 @@ func TestBearerIdentityExtraction(t *testing.T) {
 			}
 			id, err := identity(req)
 			if tc.wantErr != nil {
-				if !errors.Is(err, tc.wantErr) {
+				if !errors.Is(err, tc.wantErr) && err.Error() != tc.wantErr.Error() {
 					t.Fatalf("identity: err = %v, want %v", err, tc.wantErr)
 				}
 				return
@@ -79,7 +105,7 @@ func TestBearerIdentityExtraction(t *testing.T) {
 	}
 }
 
-func TestBearerIdentityWithoutSubject(t *testing.T) {
+func TestJWTIdentityWithoutSubject(t *testing.T) {
 	s, err := jwt.NewSignerHS256([]byte(testJWTSecret), jwt.WithTTL(time.Hour))
 	if err != nil {
 		t.Fatal(err)
@@ -89,15 +115,15 @@ func TestBearerIdentityWithoutSubject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = BearerIdentity(newTestVerifier(t))(bearerRequest(t, token))
-	if !errors.Is(err, ErrTokenWithoutSubject) {
-		t.Fatalf("identity: err = %v, want ErrTokenWithoutSubject", err)
+	_, err = jwtIdentityFunc(newTestVerifier(t))(bearerRequest(t, token))
+	if err == nil || !strings.Contains(err.Error(), "sub") {
+		t.Fatalf("identity: err = %v, want an error mentioning sub", err)
 	}
 }
 
-func TestMiddlewareWithBearerIdentity(t *testing.T) {
+func TestMiddlewareWithJWTIdentity(t *testing.T) {
 	e := newTestEnforcer(t)
-	mw, err := NewMiddleware(e, BearerIdentity(newTestVerifier(t)))
+	mw, err := NewMiddleware(e, jwtIdentityFunc(newTestVerifier(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,6 +180,13 @@ func bearerRequest(t *testing.T, token string) *http.Request {
 	req.Header.Set("Authorization", "Bearer "+token)
 	return req
 }
+
+// errMissingBearer is the failure the inline identity returns when the
+// Authorization header is missing or doesn't carry a Bearer token. We
+// compare against this sentinel by string to keep the test focused on the
+// outcome (401 path) rather than the specific error value, which each
+// caller is free to choose.
+var errMissingBearer = errors.New("missing bearer token")
 
 // flipLastChar deterministically corrupts a token so its signature breaks.
 func flipLastChar(s string) string {

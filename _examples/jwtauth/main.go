@@ -1,6 +1,7 @@
 // Command jwtauth demonstrates libauth with JWT bearer authentication:
 // POST /login issues a short-lived HS256 token naming the user (sub), and
-// every protected route verifies that token through libauth.BearerIdentity.
+// every protected route verifies that token through a small IdentityFunc
+// that calls verifier.Verify and reads the sub claim.
 //
 // Roles and permissions live server-side in the Enforcer, so changing a
 // user's roles takes effect on their next request — tokens stay valid, the
@@ -24,8 +25,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -55,7 +58,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	mw, err := libauth.NewMiddleware(m, libauth.BearerIdentity(verifier))
+	mw, err := libauth.NewMiddleware(m, jwtIdentity(verifier))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -68,6 +71,33 @@ func main() {
 
 	log.Printf("listening on http://%s (identify via Authorization: Bearer <token>)", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
+}
+
+// jwtIdentity builds the IdentityFunc the middleware uses to name the
+// calling user. Extracts the bearer token from the Authorization header,
+// verifies it, and returns the sub claim. Verification errors (malformed,
+// bad signature, expired, missing subject) all surface as 401 through the
+// middleware — handlers never see an unauthenticated request.
+func jwtIdentity(v *jwt.Verifier) libauth.IdentityFunc {
+	return func(r *http.Request) (libauth.UserID, error) {
+		h := r.Header.Get("Authorization")
+		const prefix = "Bearer "
+		if len(h) <= len(prefix) || !strings.EqualFold(h[:len(prefix)], prefix) {
+			return "", errors.New("missing bearer token")
+		}
+		token := strings.TrimSpace(h[len(prefix):])
+		if token == "" {
+			return "", errors.New("missing bearer token")
+		}
+		claims, err := v.Verify(token)
+		if err != nil {
+			return "", err
+		}
+		if claims.Subject == "" {
+			return "", errors.New("token has no sub claim")
+		}
+		return libauth.UserID(claims.Subject), nil
+	}
 }
 
 // loginHandler checks the username (no password in this demo) and issues a

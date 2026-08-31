@@ -2,9 +2,9 @@ package libauth
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,13 +23,46 @@ func (p bearerPayload) MarshalBinary() ([]byte, error) { return json.Marshal(p) 
 
 func (p *bearerPayload) UnmarshalBinary(raw []byte) error { return json.Unmarshal(raw, p) }
 
-func TestBearerIdentityWithBranca(t *testing.T) {
+// brancaIdentityFunc is the bearer-token glue the branca demo attaches to
+// the middleware: extract bearer, Decode with a TTL, return sub.
+func brancaIdentityFunc(b *branca.Branca) IdentityFunc {
+	return func(r *http.Request) (UserID, error) {
+		h := r.Header.Get("Authorization")
+		const prefix = "Bearer "
+		if len(h) <= len(prefix) || !strings.EqualFold(h[:len(prefix)], prefix) {
+			return "", errMissingBearerToken
+		}
+		token := strings.TrimSpace(h[len(prefix):])
+		if token == "" {
+			return "", errMissingBearerToken
+		}
+		var p bearerPayload
+		if _, err := b.Decode(token, time.Hour, &p); err != nil {
+			return "", err
+		}
+		if p.Sub == "" {
+			return "", errNoSubject
+		}
+		return UserID(p.Sub), nil
+	}
+}
+
+var (
+	errMissingBearerToken = stringError("missing bearer token")
+	errNoSubject          = stringError("token has no sub claim")
+)
+
+type stringError string
+
+func (e stringError) Error() string { return string(e) }
+
+func TestBrancaBearerIdentity(t *testing.T) {
 	e := newTestEnforcer(t)
-	b, err := branca.New([]byte(testBrancaKey), branca.WithTTL(time.Hour))
+	b, err := branca.New([]byte(testBrancaKey), branca.WithNow(fixedClock(time.Now().Unix())))
 	if err != nil {
 		t.Fatal(err)
 	}
-	mw, err := NewMiddleware(e, BearerIdentity(b)) // *branca.Branca satisfies BearerVerifier
+	mw, err := NewMiddleware(e, brancaIdentityFunc(b))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,15 +112,6 @@ func TestBearerIdentityWithBranca(t *testing.T) {
 	}
 	if rec := req(expired); rec.Code != http.StatusUnauthorized {
 		t.Errorf("expired token: code=%d, want 401", rec.Code)
-	}
-
-	// A codec without a TTL must refuse bearer verification outright.
-	noTTL, err := branca.New([]byte(testBrancaKey))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := noTTL.VerifyBearer(bob); !errors.Is(err, branca.ErrMissingTTL) {
-		t.Errorf("VerifyBearer without TTL: err = %v, want ErrMissingTTL", err)
 	}
 
 	// Garbage is 401, not 500.

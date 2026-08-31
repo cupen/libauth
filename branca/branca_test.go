@@ -24,9 +24,17 @@ func (s session) MarshalBinary() ([]byte, error) { return json.Marshal(s) }
 
 func (s *session) UnmarshalBinary(raw []byte) error { return json.Unmarshal(raw, s) }
 
+// noopUnmarshaler discards the payload — useful in tests that only care
+// about decoding side-effects (timestamp, errors) and not the bytes.
+type noopUnmarshaler struct{}
+
+func (noopUnmarshaler) UnmarshalBinary([]byte) error { return nil }
+
 type failingMarshaler struct{}
 
-func (failingMarshaler) MarshalBinary() ([]byte, error) { return nil, errors.New("boom") }
+func (failingMarshaler) MarshalBinary() ([]byte, error) {
+	return nil, errors.New("boom")
+}
 
 func newTestBranca(t *testing.T, opts ...Option) *Branca {
 	t.Helper()
@@ -62,14 +70,14 @@ func TestOfficialDecodeVectors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			opened, err := newTestBranca(t).Open(tc.token, 0)
+			tok, err := newTestBranca(t).Decode(tc.token, 0, noopUnmarshaler{})
 			if err != nil {
-				t.Fatalf("Open: %v", err)
+				t.Fatalf("Decode: %v", err)
 			}
-			if !bytes.Equal(opened.Payload, []byte(tc.payload)) {
-				t.Fatalf("payload = %x, want %x", opened.Payload, tc.payload)
+			if !bytes.Equal(tok.Payload, []byte(tc.payload)) {
+				t.Fatalf("payload = %x, want %x", tok.Payload, tc.payload)
 			}
-			if got := opened.Timestamp.Unix(); got != int64(tc.ts) {
+			if got := tok.Timestamp.Unix(); got != int64(tc.ts) {
 				t.Fatalf("timestamp = %d, want %d", got, tc.ts)
 			}
 		})
@@ -89,8 +97,8 @@ func TestOfficialNegativeVectors(t *testing.T) {
 	}
 	for _, tc := range malformed {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := newTestBranca(t).Open(tc.token, 0); !errors.Is(err, ErrTokenMalformed) {
-				t.Fatalf("Open: err = %v, want ErrTokenMalformed", err)
+			if _, err := newTestBranca(t).Decode(tc.token, 0, noopUnmarshaler{}); !errors.Is(err, ErrTokenMalformed) {
+				t.Fatalf("Decode: err = %v, want ErrTokenMalformed", err)
 			}
 		})
 	}
@@ -105,8 +113,8 @@ func TestOfficialNegativeVectors(t *testing.T) {
 	}
 	for _, tc := range invalid {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := newTestBranca(t).Open(tc.token, 0); !errors.Is(err, ErrTokenInvalid) {
-				t.Fatalf("Open: err = %v, want ErrTokenInvalid", err)
+			if _, err := newTestBranca(t).Decode(tc.token, 0, noopUnmarshaler{}); !errors.Is(err, ErrTokenInvalid) {
+				t.Fatalf("Decode: err = %v, want ErrTokenInvalid", err)
 			}
 		})
 	}
@@ -116,64 +124,64 @@ func TestOfficialNegativeVectors(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
-		if _, err := c.Open("875GH23U0Dr6nHFA63DhOyd9LkYudBkX8RsCTOMz5xoYAMw9sMd5QwcEqLDRnTDHPenOX7nP2trlT", 0); !errors.Is(err, ErrTokenInvalid) {
-			t.Fatalf("Open: err = %v, want ErrTokenInvalid", err)
+		if _, err := c.Decode("875GH23U0Dr6nHFA63DhOyd9LkYudBkX8RsCTOMz5xoYAMw9sMd5QwcEqLDRnTDHPenOX7nP2trlT", 0, noopUnmarshaler{}); !errors.Is(err, ErrTokenInvalid) {
+			t.Fatalf("Decode: err = %v, want ErrTokenInvalid", err)
 		}
 	})
 }
 
-// TestSealMatchesOfficialVector derives the encode direction from the
+// TestEncodeMatchesOfficialVector derives the encode direction from the
 // documented provenance of decode vector 10: nonce beef repeated 12 times,
 // timestamp 0x0757fb00, payload "Hello world!".
-func TestSealMatchesOfficialVector(t *testing.T) {
+func TestEncodeMatchesOfficialVector(t *testing.T) {
 	c := newTestBranca(t,
 		WithNow(fixedClock(123206400)),
 		WithRand(bytes.NewReader(bytes.Repeat([]byte{0xBE, 0xEF}, 12))),
 	)
-	token, err := c.Seal([]byte("Hello world!"))
+	token, err := c.Encode(Bytes("Hello world!"))
 	if err != nil {
-		t.Fatalf("Seal: %v", err)
+		t.Fatalf("Encode: %v", err)
 	}
 	const want = "875GH23U0Dr6nHFA63DhOyd9LkYudBkX8RsCTOMz5xoYAMw9sMd5QwcEqLDRnTDHPenOX7nP2trlT"
 	if token != want {
-		t.Fatalf("Seal mismatch:\n got %s\nwant %s", token, want)
+		t.Fatalf("Encode mismatch:\n got %s\nwant %s", token, want)
 	}
 }
 
-func TestSealOpenRoundTrip(t *testing.T) {
+func TestEncodeDecodeRoundTrip(t *testing.T) {
 	for _, payload := range [][]byte{
 		[]byte("Hello world!"),
 		{},
 		bytes.Repeat([]byte{0x00}, 16),
 		[]byte(`{"sub":"bob","team":"core"}`),
 	} {
-		token, err := newTestBranca(t, WithNow(fixedClock(1000))).Seal(payload)
+		token, err := newTestBranca(t, WithNow(fixedClock(1000))).Encode(Bytes(payload))
 		if err != nil {
-			t.Fatalf("Seal(%x): %v", payload, err)
+			t.Fatalf("Encode(%x): %v", payload, err)
 		}
-		opened, err := newTestBranca(t, WithNow(fixedClock(1000))).Open(token, 0)
+		tok, err := newTestBranca(t, WithNow(fixedClock(1000))).Decode(token, 0, noopUnmarshaler{})
 		if err != nil {
-			t.Fatalf("Open(%x): %v", payload, err)
+			t.Fatalf("Decode(%x): %v", payload, err)
 		}
-		if !bytes.Equal(opened.Payload, payload) {
-			t.Fatalf("payload = %x, want %x", opened.Payload, payload)
+		if !bytes.Equal(tok.Payload, payload) {
+			t.Fatalf("payload = %x, want %x", tok.Payload, payload)
 		}
-		if !opened.Timestamp.Equal(time.Unix(1000, 0).UTC()) {
-			t.Fatalf("timestamp = %v, want unix 1000", opened.Timestamp)
+		if !tok.Timestamp.Equal(time.Unix(1000, 0).UTC()) {
+			t.Fatalf("timestamp = %v, want unix 1000", tok.Timestamp)
 		}
 	}
 }
 
-func TestOpenTTL(t *testing.T) {
-	token, err := newTestBranca(t, WithNow(fixedClock(1000))).Seal([]byte("x"))
+func TestDecodeTTL(t *testing.T) {
+	token, err := newTestBranca(t, WithNow(fixedClock(1000))).Encode(Bytes("x"))
 	if err != nil {
-		t.Fatalf("Seal: %v", err)
+		t.Fatalf("Encode: %v", err)
 	}
 
 	cases := []struct {
 		name   string
 		opened int64         // clock of the opening codec
-		ttl    time.Duration // ttl passed to Open
+		ttl    time.Duration // ttl passed to Decode
 		want   error
 	}{
 		{"no ttl", 999999, 0, nil},
@@ -183,15 +191,15 @@ func TestOpenTTL(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := newTestBranca(t, WithNow(fixedClock(tc.opened))).Open(token, tc.ttl)
+			_, err := newTestBranca(t, WithNow(fixedClock(tc.opened))).Decode(token, tc.ttl, noopUnmarshaler{})
 			if tc.want == nil {
 				if err != nil {
-					t.Fatalf("Open: unexpected error %v", err)
+					t.Fatalf("Decode: unexpected error %v", err)
 				}
 				return
 			}
 			if !errors.Is(err, tc.want) {
-				t.Fatalf("Open: err = %v, want %v", err, tc.want)
+				t.Fatalf("Decode: err = %v, want %v", err, tc.want)
 			}
 		})
 	}
@@ -200,27 +208,27 @@ func TestOpenTTL(t *testing.T) {
 func TestMalformedTokens(t *testing.T) {
 	c := newTestBranca(t)
 	for _, token := range []string{"", "abc", strings.Repeat("1", 60), "!!!"} {
-		if _, err := c.Open(token, 0); !errors.Is(err, ErrTokenMalformed) {
-			t.Errorf("Open(%q): err = %v, want ErrTokenMalformed", token, err)
+		if _, err := c.Decode(token, 0, noopUnmarshaler{}); !errors.Is(err, ErrTokenMalformed) {
+			t.Errorf("Decode(%q): err = %v, want ErrTokenMalformed", token, err)
 		}
 	}
 
 	// A well-formed base62 token whose version byte is not 0xBA.
 	bogus := base62Encode(append([]byte{0xBB}, make([]byte, 44)...))
-	if _, err := c.Open(bogus, 0); !errors.Is(err, ErrTokenMalformed) {
-		t.Errorf("Open(0xBB token): err = %v, want ErrTokenMalformed", err)
+	if _, err := c.Decode(bogus, 0, noopUnmarshaler{}); !errors.Is(err, ErrTokenMalformed) {
+		t.Errorf("Decode(0xBB token): err = %v, want ErrTokenMalformed", err)
 	}
 }
 
-func TestSealTimestampRange(t *testing.T) {
-	if _, err := newTestBranca(t, WithNow(fixedClock(-1))).Seal(nil); err == nil {
+func TestEncodeTimestampRange(t *testing.T) {
+	if _, err := newTestBranca(t, WithNow(fixedClock(-1))).Encode(Bytes(nil)); err == nil {
 		t.Error("negative timestamp must be rejected")
 	}
-	if _, err := newTestBranca(t, WithNow(fixedClock(int64(4294967295)+1))).Seal(nil); err == nil {
+	if _, err := newTestBranca(t, WithNow(fixedClock(int64(4294967295)+1))).Encode(Bytes(nil)); err == nil {
 		t.Error("timestamp beyond 2106 must be rejected")
 	}
-	if _, err := newTestBranca(t, WithNow(fixedClock(int64(4294967295)))).Seal(nil); err != nil {
-		t.Errorf("Seal at max uint32 timestamp: %v", err)
+	if _, err := newTestBranca(t, WithNow(fixedClock(int64(4294967295)))).Encode(Bytes(nil)); err != nil {
+		t.Errorf("Encode at max uint32 timestamp: %v", err)
 	}
 }
 
@@ -279,19 +287,23 @@ func TestBrancaEncodeDecode(t *testing.T) {
 		t.Fatalf("Encode: %v", err)
 	}
 	var got session
-	if err := b.Decode(token, 0, &got); err != nil {
+	tok, err := b.Decode(token, 0, &got)
+	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
 	if got != (session{Sub: "bob", Scope: "read"}) {
 		t.Fatalf("value = %+v, want bob/read", got)
 	}
+	if tok.Timestamp.IsZero() {
+		t.Error("Token.Timestamp should be populated")
+	}
 
 	// A payload the type cannot decode is a malformed token, not a panic.
-	raw, err := b.Seal([]byte("not json"))
+	raw, err := b.Encode(Bytes("not json"))
 	if err != nil {
-		t.Fatalf("Seal: %v", err)
+		t.Fatalf("Encode: %v", err)
 	}
-	if err := b.Decode(raw, 0, &got); !errors.Is(err, ErrTokenMalformed) {
+	if _, err := b.Decode(raw, 0, &got); !errors.Is(err, ErrTokenMalformed) {
 		t.Fatalf("Decode(non-JSON): err = %v, want ErrTokenMalformed", err)
 	}
 }
@@ -306,17 +318,34 @@ func TestBrancaEncodeError(t *testing.T) {
 	}
 }
 
-func TestVerifyBearer(t *testing.T) {
-	withTTL, err := New([]byte(testKey), WithTTL(time.Hour), WithNow(fixedClock(4000)))
+// TestBearerIdentification exercises the bearer-token round-trip the way a
+// real IdentityFunc would: Decode the token, read the sub claim. The
+// dedicated VerifyBearer method that used to live on *Branca was removed
+// in favour of this caller-side flow.
+func TestBearerIdentification(t *testing.T) {
+	const ttl = time.Hour
+	b, err := New([]byte(testKey), WithNow(fixedClock(4000)))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	token, err := withTTL.Encode(session{Sub: "bob"})
+	token, err := b.Encode(session{Sub: "bob"})
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	if subject, err := withTTL.VerifyBearer(token); err != nil || subject != "bob" {
-		t.Fatalf("VerifyBearer = %q, %v; want bob, nil", subject, err)
+
+	identify := func(tok string) (string, error) {
+		var s session
+		if _, err := b.Decode(tok, ttl, &s); err != nil {
+			return "", err
+		}
+		if s.Sub == "" {
+			return "", errors.New("token has no sub claim")
+		}
+		return s.Sub, nil
+	}
+
+	if subject, err := identify(token); err != nil || subject != "bob" {
+		t.Fatalf("identify = %q, %v; want bob, nil", subject, err)
 	}
 
 	// An expired token is rejected even though it authenticates fine.
@@ -328,36 +357,47 @@ func TestVerifyBearer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	if _, err := withTTL.VerifyBearer(expired); !errors.Is(err, ErrTokenExpired) {
-		t.Fatalf("VerifyBearer: err = %v, want ErrTokenExpired", err)
-	}
-
-	// No TTL configured: bearer verification must fail closed.
-	noTTL, err := New([]byte(testKey))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if _, err := noTTL.VerifyBearer(token); !errors.Is(err, ErrMissingTTL) {
-		t.Fatalf("VerifyBearer without TTL: err = %v, want ErrMissingTTL", err)
+	if _, err := identify(expired); !errors.Is(err, ErrTokenExpired) {
+		t.Fatalf("identify expired: err = %v, want ErrTokenExpired", err)
 	}
 
 	// A payload naming no user must not authenticate as the empty user.
-	anonymous, err := withTTL.Encode(session{Scope: "read"})
+	anonymous, err := b.Encode(session{Scope: "read"})
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	if _, err := withTTL.VerifyBearer(anonymous); !errors.Is(err, ErrTokenWithoutSubject) {
-		t.Fatalf("VerifyBearer without sub: err = %v, want ErrTokenWithoutSubject", err)
+	if _, err := identify(anonymous); err == nil || !strings.Contains(err.Error(), "sub") {
+		t.Fatalf("identify anonymous: err = %v, want sub error", err)
 	}
 
-	// Payloads that are not objects with a string "sub".
+	// Payloads that are not objects that can be decoded into a session.
 	for _, payload := range []string{`{"sub":42}`, `"str"`, "", `{"sub":"a"} trailing`} {
-		raw, err := withTTL.Seal([]byte(payload))
+		raw, err := b.Encode(Bytes(payload))
 		if err != nil {
-			t.Fatalf("Seal(%q): %v", payload, err)
+			t.Fatalf("Encode(%q): %v", payload, err)
 		}
-		if _, err := withTTL.VerifyBearer(raw); !errors.Is(err, ErrTokenMalformed) {
-			t.Errorf("VerifyBearer(%q): err = %v, want ErrTokenMalformed", payload, err)
+		if _, err := identify(raw); !errors.Is(err, ErrTokenMalformed) {
+			t.Errorf("identify(%q): err = %v, want ErrTokenMalformed", payload, err)
 		}
+	}
+}
+
+func TestBytesRoundTrip(t *testing.T) {
+	b, err := New([]byte(testKey), WithNow(fixedClock(1000)))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	want := Bytes("opaque-binary-payload")
+	token, err := b.Encode(want)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	var got Bytes
+	if _, err := b.Decode(token, 0, &got); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("payload = %x, want %x", got, want)
 	}
 }
