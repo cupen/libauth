@@ -1,6 +1,7 @@
 package store
 
 import (
+	"slices"
 	"sync"
 
 	"github.com/cupen/libauth/model"
@@ -10,24 +11,24 @@ import (
 type MemoryStore struct {
 	mu    sync.RWMutex
 	users map[model.UserID]*model.User
-	roles map[model.RoleName]*model.Role
+	roles map[model.RoleID]*model.Role
 }
 
 // NewMemoryStore returns an empty MemoryStore.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		users: make(map[model.UserID]*model.User),
-		roles: make(map[model.RoleName]*model.Role),
+		roles: make(map[model.RoleID]*model.Role),
 	}
 }
 
 func cloneUser(u *model.User) *model.User {
 	c := &model.User{ID: u.ID}
 	if len(u.Roles) > 0 {
-		c.Roles = append([]model.RoleName(nil), u.Roles...)
+		c.Roles = slices.Clone(u.Roles)
 	}
 	if len(u.Direct) > 0 {
-		c.Direct = append([]model.Permission(nil), u.Direct...)
+		c.Direct = slices.Clone(u.Direct)
 	}
 	return c
 }
@@ -35,7 +36,7 @@ func cloneUser(u *model.User) *model.User {
 func cloneRole(r *model.Role) *model.Role {
 	c := &model.Role{Name: r.Name, Parent: r.Parent}
 	if len(r.Permissions) > 0 {
-		c.Permissions = append([]model.Permission(nil), r.Permissions...)
+		c.Permissions = slices.Clone(r.Permissions)
 	}
 	return c
 }

@@ -23,7 +23,7 @@ func TestMemoryStoreUserCRUD(t *testing.T) {
 		t.Errorf("update nil user: got %v", err)
 	}
 
-	if err := s.CreateUser(&model.User{ID: "u1", Roles: []model.RoleName{"a"}}); err != nil {
+	if err := s.CreateUser(&model.User{ID: "u1", Roles: []model.RoleID{"a"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.CreateUser(&model.User{ID: "u1"}); !errors.Is(err, ErrUserExists) {
@@ -46,7 +46,7 @@ func TestMemoryStoreUserCRUD(t *testing.T) {
 	}
 
 	// UpdateUser replaces the persisted record.
-	if err := s.UpdateUser(&model.User{ID: "u1", Roles: []model.RoleName{"a", "b"}}); err != nil {
+	if err := s.UpdateUser(&model.User{ID: "u1", Roles: []model.RoleID{"a", "b"}}); err != nil {
 		t.Fatal(err)
 	}
 	again, err := s.GetUser("u1")
@@ -138,7 +138,7 @@ func TestMemoryStoreDeleteRoleIsShallow(t *testing.T) {
 	if err := s.CreateRole(&model.Role{Name: "child", Parent: "parent"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateUser(&model.User{ID: "u", Roles: []model.RoleName{"parent"}}); err != nil {
+	if err := s.CreateUser(&model.User{ID: "u", Roles: []model.RoleID{"parent"}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -162,7 +162,7 @@ func TestMemoryStoreDeleteRoleIsShallow(t *testing.T) {
 func TestMemoryStoreListSortedAndEmpty(t *testing.T) {
 	s := NewMemoryStore()
 
-	for _, name := range []model.RoleName{"b", "a", "c"} {
+	for _, name := range []model.RoleID{"b", "a", "c"} {
 		if err := s.CreateRole(&model.Role{Name: name}); err != nil {
 			t.Fatal(err)
 		}
@@ -177,7 +177,7 @@ func TestMemoryStoreListSortedAndEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	names := make([]model.RoleName, len(roles))
+	names := make([]model.RoleID, len(roles))
 	for i, r := range roles {
 		names[i] = r.Name
 	}

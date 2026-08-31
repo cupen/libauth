@@ -32,7 +32,7 @@ func (s *MemoryStore) UpdateRole(r *model.Role) error {
 	return nil
 }
 
-func (s *MemoryStore) GetRole(name model.RoleName) (*model.Role, error) {
+func (s *MemoryStore) GetRole(name model.RoleID) (*model.Role, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	r, ok := s.roles[name]
@@ -44,7 +44,7 @@ func (s *MemoryStore) GetRole(name model.RoleName) (*model.Role, error) {
 
 // DeleteRole does not cascade-detach the role from users or from other
 // roles' parent lists — that bookkeeping is the caller's job.
-func (s *MemoryStore) DeleteRole(name model.RoleName) error {
+func (s *MemoryStore) DeleteRole(name model.RoleID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.roles[name]; !ok {

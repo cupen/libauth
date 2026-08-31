@@ -38,7 +38,7 @@ func newTestEnforcer(t *testing.T) *Enforcer {
 		t.Fatal(err)
 	}
 
-	users := map[string][]model.RoleName{
+	users := map[string][]model.RoleID{
 		"alice": {"admin"},
 		"bob":   {"editor", "viewer"}, // multi-role
 		"carol": {"viewer"},
@@ -121,7 +121,7 @@ func TestRoleInheritance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []model.RoleName{"editor", "publisher"}
+	want := []model.RoleID{"editor", "publisher"}
 	if !reflect.DeepEqual(roles, want) {
 		t.Errorf("RolesFor(dave) = %v, want %v", roles, want)
 	}
@@ -135,7 +135,7 @@ func TestDeepInheritanceChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 2; i <= 10; i++ {
-		if err := e.CreateRole(model.RoleName(fmt.Sprintf("l%d", i)), nil, model.RoleName(fmt.Sprintf("l%d", i-1))); err != nil {
+		if err := e.CreateRole(model.RoleID(fmt.Sprintf("l%d", i)), nil, model.RoleID(fmt.Sprintf("l%d", i-1))); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -238,7 +238,7 @@ func TestCheckErrors(t *testing.T) {
 func TestUnknownRoleIgnoredInResolution(t *testing.T) {
 	e := newTestEnforcer(t)
 	// Directly inject a user with a dangling role via the store.
-	if err := e.Store().CreateUser(&model.User{ID: "eve", Roles: []model.RoleName{"ghost", "viewer"}}); err != nil {
+	if err := e.Store().CreateUser(&model.User{ID: "eve", Roles: []model.RoleID{"ghost", "viewer"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.Check("eve", perm("article:read")); err != nil {
@@ -309,7 +309,7 @@ func TestMemoryStoreConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			id := model.RoleName("gen")
+			id := model.RoleID("gen")
 			_ = e.CreateUser(model.UserID(string(rune('a'+i))+"user"), "viewer")
 			_ = e.AssignRole(model.UserID(string(rune('a'+i))+"user"), id)
 			_ = e.RevokeRole(model.UserID(string(rune('a'+i))+"user"), id)
@@ -365,7 +365,7 @@ func TestWithMaxDepth(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 2; i <= 4; i++ {
-		if err := e.CreateRole(model.RoleName(fmt.Sprintf("l%d", i)), nil, model.RoleName(fmt.Sprintf("l%d", i-1))); err != nil {
+		if err := e.CreateRole(model.RoleID(fmt.Sprintf("l%d", i)), nil, model.RoleID(fmt.Sprintf("l%d", i-1))); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -396,7 +396,7 @@ func TestWithMaxDepth(t *testing.T) {
 }
 
 // mustRole creates a role with a parent ("" for none).
-func mustRole(t *testing.T, e *Enforcer, name model.RoleName, perms []model.Permission, parent model.RoleName) {
+func mustRole(t *testing.T, e *Enforcer, name model.RoleID, perms []model.Permission, parent model.RoleID) {
 	t.Helper()
 	if err := e.CreateRole(name, perms, parent); err != nil {
 		t.Fatal(err)

@@ -23,7 +23,7 @@ type Store interface {
 	// ---- roles ----
 	CreateRole(r *model.Role) error
 	UpdateRole(r *model.Role) error
-	GetRole(name model.RoleName) (*model.Role, error)
-	DeleteRole(name model.RoleName) error
+	GetRole(name model.RoleID) (*model.Role, error)
+	DeleteRole(name model.RoleID) error
 	ListRoles() ([]*model.Role, error)
 }

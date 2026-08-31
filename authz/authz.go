@@ -26,7 +26,7 @@ type Enforcer struct {
 
 	cacheMu     sync.RWMutex
 	cache       map[model.UserID]*grantedSet
-	roleHolders map[model.RoleName]map[model.UserID]struct{}
+	roleHolders map[model.RoleID]map[model.UserID]struct{}
 }
 
 // grantedSet indexes a user's granted permissions by (Resource, Action) for
@@ -104,7 +104,7 @@ func New(opts ...Option) *Enforcer {
 		store:       store.NewMemoryStore(),
 		maxDepth:    DefaultMaxDepth,
 		cache:       make(map[model.UserID]*grantedSet),
-		roleHolders: make(map[model.RoleName]map[model.UserID]struct{}),
+		roleHolders: make(map[model.RoleID]map[model.UserID]struct{}),
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -125,7 +125,7 @@ func (e *Enforcer) invalidateUser(id model.UserID) {
 
 // invalidateRoleHolders drops the cached granted-set for every user that
 // holds the given role (directly or through inheritance).
-func (e *Enforcer) invalidateRoleHolders(role model.RoleName) {
+func (e *Enforcer) invalidateRoleHolders(role model.RoleID) {
 	e.cacheMu.Lock()
 	for uid := range e.roleHolders[role] {
 		delete(e.cache, uid)
@@ -135,7 +135,7 @@ func (e *Enforcer) invalidateRoleHolders(role model.RoleName) {
 
 // grantHolder records that uid holds role (used to keep roleHolders in sync
 // for fast invalidation).
-func (e *Enforcer) grantHolder(uid model.UserID, role model.RoleName) {
+func (e *Enforcer) grantHolder(uid model.UserID, role model.RoleID) {
 	e.cacheMu.Lock()
 	holders, ok := e.roleHolders[role]
 	if !ok {
@@ -147,7 +147,7 @@ func (e *Enforcer) grantHolder(uid model.UserID, role model.RoleName) {
 }
 
 // revokeHolder removes uid from role's holders set.
-func (e *Enforcer) revokeHolder(uid model.UserID, role model.RoleName) {
+func (e *Enforcer) revokeHolder(uid model.UserID, role model.RoleID) {
 	e.cacheMu.Lock()
 	if holders, ok := e.roleHolders[role]; ok {
 		delete(holders, uid)

@@ -21,7 +21,7 @@ var ErrInvalidIdentityFunc = errors.New("libauth: identity func is required")
 type Authorizer interface {
 	Check(id model.UserID, required model.Permission) error
 	HasPermission(id model.UserID, required model.Permission) (bool, error)
-	HasRole(id model.UserID, role model.RoleName) (bool, error)
+	HasRole(id model.UserID, role model.RoleID) (bool, error)
 	GetUser(id model.UserID) (*model.User, error)
 }
 

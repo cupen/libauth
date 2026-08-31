@@ -72,7 +72,7 @@ func (mw *Middleware) RequireAny(perms ...model.Permission) func(http.Handler) h
 }
 
 // RequireRole passes when the user directly holds the role.
-func (mw *Middleware) RequireRole(role model.RoleName) func(http.Handler) http.Handler {
+func (mw *Middleware) RequireRole(role model.RoleID) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			u, ok := mw.identify(w, r)

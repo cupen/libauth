@@ -7,7 +7,7 @@ import (
 )
 
 // HasRole reports whether the user holds the role directly.
-func (e *Enforcer) HasRole(id model.UserID, role model.RoleName) (bool, error) {
+func (e *Enforcer) HasRole(id model.UserID, role model.RoleID) (bool, error) {
 	u, err := e.store.GetUser(id)
 	if err != nil {
 		return false, err
@@ -21,7 +21,7 @@ func (e *Enforcer) HasRole(id model.UserID, role model.RoleName) (bool, error) {
 }
 
 // HasAnyRole reports whether the user holds any of the roles directly.
-func (e *Enforcer) HasAnyRole(id model.UserID, roles ...model.RoleName) (bool, error) {
+func (e *Enforcer) HasAnyRole(id model.UserID, roles ...model.RoleID) (bool, error) {
 	for _, role := range roles {
 		ok, err := e.HasRole(id, role)
 		if err != nil {
@@ -35,7 +35,7 @@ func (e *Enforcer) HasAnyRole(id model.UserID, roles ...model.RoleName) (bool, e
 }
 
 // HasAllRoles reports whether the user holds every listed role directly.
-func (e *Enforcer) HasAllRoles(id model.UserID, roles ...model.RoleName) (bool, error) {
+func (e *Enforcer) HasAllRoles(id model.UserID, roles ...model.RoleID) (bool, error) {
 	for _, role := range roles {
 		ok, err := e.HasRole(id, role)
 		if err != nil {

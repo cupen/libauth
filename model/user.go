@@ -10,6 +10,6 @@ type UserID = string
 // permissions.
 type User struct {
 	ID     UserID       `json:"id"`
-	Roles  []RoleName   `json:"roles"`
+	Roles  []RoleID   `json:"roles"`
 	Direct []Permission `json:"direct,omitempty"`
 }

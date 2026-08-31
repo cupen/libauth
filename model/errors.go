@@ -15,7 +15,7 @@ type PermissionDeniedError struct {
 	UserID   UserID
 	User     *User
 	Required Permission
-	Roles    []RoleName
+	Roles    []RoleID
 }
 
 func (e *PermissionDeniedError) Error() string {

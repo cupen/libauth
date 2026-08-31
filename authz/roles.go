@@ -7,7 +7,7 @@ import (
 
 // CreateRole registers a new role. Parent, when non-empty, must exist and
 // must not create a cycle or exceed the inheritance depth cap.
-func (e *Enforcer) CreateRole(name model.RoleName, permissions []model.Permission, parent model.RoleName) error {
+func (e *Enforcer) CreateRole(name model.RoleID, permissions []model.Permission, parent model.RoleID) error {
 	if name == "" {
 		return store.ErrEmptyName
 	}
@@ -30,7 +30,7 @@ func (e *Enforcer) CreateRole(name model.RoleName, permissions []model.Permissio
 
 // UpdateRole replaces a role's permissions and parent. Cycles and
 // over-deep chains are rejected.
-func (e *Enforcer) UpdateRole(name model.RoleName, permissions []model.Permission, parent model.RoleName) error {
+func (e *Enforcer) UpdateRole(name model.RoleID, permissions []model.Permission, parent model.RoleID) error {
 	if name == "" {
 		return store.ErrEmptyName
 	}
@@ -56,7 +56,7 @@ func (e *Enforcer) UpdateRole(name model.RoleName, permissions []model.Permissio
 
 // DeleteRole removes the role and cascade-detaches it from every user's
 // Roles and from every role that named it as Parent.
-func (e *Enforcer) DeleteRole(name model.RoleName) error {
+func (e *Enforcer) DeleteRole(name model.RoleID) error {
 	if _, err := e.store.GetRole(name); err != nil {
 		return err
 	}
@@ -114,11 +114,11 @@ func (e *Enforcer) DeleteRole(name model.RoleName) error {
 	return e.store.DeleteRole(name)
 }
 
-func (e *Enforcer) GetRole(name model.RoleName) (*model.Role, error) { return e.store.GetRole(name) }
+func (e *Enforcer) GetRole(name model.RoleID) (*model.Role, error) { return e.store.GetRole(name) }
 
 func (e *Enforcer) ListRoles() ([]*model.Role, error) { return e.store.ListRoles() }
 
-func (e *Enforcer) GrantPermission(role model.RoleName, p model.Permission) error {
+func (e *Enforcer) GrantPermission(role model.RoleID, p model.Permission) error {
 	if !p.Valid() {
 		return model.ErrInvalidPermission
 	}
@@ -139,7 +139,7 @@ func (e *Enforcer) GrantPermission(role model.RoleName, p model.Permission) erro
 	return nil
 }
 
-func (e *Enforcer) RevokePermission(role model.RoleName, p model.Permission) error {
+func (e *Enforcer) RevokePermission(role model.RoleID, p model.Permission) error {
 	if !p.Valid() {
 		return model.ErrInvalidPermission
 	}
@@ -165,7 +165,7 @@ func (e *Enforcer) RevokePermission(role model.RoleName, p model.Permission) err
 // setting a new parent replaces the previous one, and an empty parent
 // detaches the role from any inheritance chain. Cycles and over-deep chains
 // are rejected.
-func (e *Enforcer) SetParent(role, parent model.RoleName) error {
+func (e *Enforcer) SetParent(role, parent model.RoleID) error {
 	r, err := e.store.GetRole(role)
 	if err != nil {
 		return err

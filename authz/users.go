@@ -5,11 +5,11 @@ import (
 	"github.com/cupen/libauth/store"
 )
 
-func (e *Enforcer) CreateUser(id model.UserID, roles ...model.RoleName) error {
+func (e *Enforcer) CreateUser(id model.UserID, roles ...model.RoleID) error {
 	if id == "" {
 		return store.ErrEmptyName
 	}
-	if err := e.store.CreateUser(&model.User{ID: id, Roles: append([]model.RoleName(nil), roles...)}); err != nil {
+	if err := e.store.CreateUser(&model.User{ID: id, Roles: append([]model.RoleID(nil), roles...)}); err != nil {
 		return err
 	}
 	for _, role := range roles {
@@ -35,7 +35,7 @@ func (e *Enforcer) GetUser(id model.UserID) (*model.User, error) { return e.stor
 
 func (e *Enforcer) ListUsers() ([]*model.User, error) { return e.store.ListUsers() }
 
-func (e *Enforcer) AssignRole(id model.UserID, role model.RoleName) error {
+func (e *Enforcer) AssignRole(id model.UserID, role model.RoleID) error {
 	if _, err := e.store.GetRole(role); err != nil {
 		return err
 	}
@@ -57,7 +57,7 @@ func (e *Enforcer) AssignRole(id model.UserID, role model.RoleName) error {
 	return nil
 }
 
-func (e *Enforcer) RevokeRole(id model.UserID, role model.RoleName) error {
+func (e *Enforcer) RevokeRole(id model.UserID, role model.RoleID) error {
 	u, err := e.store.GetUser(id)
 	if err != nil {
 		return err

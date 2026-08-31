@@ -17,7 +17,7 @@ func buildEnforcer(b *testing.B, resources, actions int) (*Enforcer, model.Permi
 	const userID = model.UserID("u")
 
 	for i := 0; i < resources; i++ {
-		rname := model.RoleName(fmt.Sprintf("r%d", i))
+		rname := model.RoleID(fmt.Sprintf("r%d", i))
 		perms := make([]model.Permission, actions)
 		for j := 0; j < actions; j++ {
 			perms[j] = model.Permission{
@@ -30,9 +30,9 @@ func buildEnforcer(b *testing.B, resources, actions int) (*Enforcer, model.Permi
 		}
 	}
 
-	roleNames := make([]model.RoleName, resources)
+	roleNames := make([]model.RoleID, resources)
 	for i := 0; i < resources; i++ {
-		roleNames[i] = model.RoleName(fmt.Sprintf("r%d", i))
+		roleNames[i] = model.RoleID(fmt.Sprintf("r%d", i))
 	}
 	if err := e.CreateUser(userID, roleNames...); err != nil {
 		b.Fatal(err)

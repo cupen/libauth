@@ -9,7 +9,7 @@ import (
 
 // RolesFor returns the user's effective role chain (direct roles plus their
 // single-parent ancestor chains, deduplicated, sorted).
-func (e *Enforcer) RolesFor(id model.UserID) ([]model.RoleName, error) {
+func (e *Enforcer) RolesFor(id model.UserID) ([]model.RoleID, error) {
 	u, err := e.store.GetUser(id)
 	if err != nil {
 		return nil, err
@@ -17,9 +17,9 @@ func (e *Enforcer) RolesFor(id model.UserID) ([]model.RoleName, error) {
 	return e.resolveRoles(u)
 }
 
-func (e *Enforcer) resolveRoles(u *model.User) ([]model.RoleName, error) {
-	seen := make(map[model.RoleName]bool, len(u.Roles))
-	queue := make([]model.RoleName, 0, 2*len(u.Roles))
+func (e *Enforcer) resolveRoles(u *model.User) ([]model.RoleID, error) {
+	seen := make(map[model.RoleID]bool, len(u.Roles))
+	queue := make([]model.RoleID, 0, 2*len(u.Roles))
 	for _, r := range u.Roles {
 		if !seen[r] {
 			seen[r] = true

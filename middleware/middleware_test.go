@@ -26,12 +26,12 @@ func (s *stubAuthorizer) HasPermission(id model.UserID, required model.Permissio
 	return s.denied == nil, nil
 }
 
-func (s *stubAuthorizer) HasRole(id model.UserID, role model.RoleName) (bool, error) {
+func (s *stubAuthorizer) HasRole(id model.UserID, role model.RoleID) (bool, error) {
 	return s.denied == nil, nil
 }
 
 func (s *stubAuthorizer) GetUser(id model.UserID) (*model.User, error) {
-	return &model.User{ID: id, Roles: []model.RoleName{"stub"}}, nil
+	return &model.User{ID: id, Roles: []model.RoleID{"stub"}}, nil
 }
 
 func TestGuardsWithCustomAuthorizer(t *testing.T) {
