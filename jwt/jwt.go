@@ -2,31 +2,29 @@
 // (RFC 7519) for carrying libauth identities.
 //
 // Security posture:
+//   - Algorithm pinned at construction: a Verifier only accepts tokens
+//     signed with the exact algorithm it was built for, so "none" and
+//     cross-algorithm confusion are structurally impossible.
+//   - HS256 (HMAC-SHA-256) and EdDSA (Ed25519), both stdlib-only.
+//   - Signature verified before any claim is parsed.
+//   - Sign refuses claims without exp unless a default TTL is configured.
+//   - Sign refuses claims without sub.
 //
-//   - The algorithm is pinned by construction: a Verifier only accepts
-//     tokens signed with the exact algorithm it was built for, so the
-//     "none" algorithm and cross-algorithm confusion attacks are
-//     structurally impossible.
-//   - Only HS256 (HMAC-SHA-256, shared secret) and EdDSA (Ed25519) are
-//     supported. Both ship with the Go standard library, which keeps
-//     libauth free of third-party dependencies.
-//   - Signatures are verified before any claim is parsed. exp, nbf and iat
-//     are enforced (with optional leeway); iss and aud can be pinned.
-//   - Sign refuses claims without an expiration unless a default TTL is
-//     configured, so tokens that never expire cannot be created by accident.
+// Typical use — bind a symmetric JWT once and use Encode / Decode on both
+// sides of the wire:
 //
-// Typical use — sign where users log in, verify where requests arrive:
+//	auth, err := jwt.New(secret,
+//	    jwt.WithTTL(15*time.Minute),
+//	    jwt.WithIssuer("login"),
+//	    jwt.WithExpectedIssuer("login"),
+//	)
+//	token, err := auth.Encode(jwt.Claims{Subject: "bob"})
+//	claims, err := auth.Decode(token)
 //
-//	signer, err := jwt.NewSignerHS256(secret, jwt.WithTTL(15*time.Minute))
-//	token, err := signer.Sign(jwt.Claims{Subject: "bob"})
-//
-//	verifier, err := jwt.NewVerifierHS256(secret, jwt.WithExpectedIssuer("login"))
-//	claims, err := verifier.Verify(token)
-//
-// Use HS256 when the issuer and every verifier live in one trust boundary
-// and can share a secret; use EdDSA when several services must verify
-// tokens that only the issuer can create (verifiers hold the public key
-// only).
+// For asymmetric deployments where only the issuer holds the private key,
+// use NewEdDSA. Splitting a Signer and a Verifier is still possible via
+// NewSignerEdDSA / NewVerifierEdDSA when the two sides must live in
+// different processes.
 package jwt
 
 import (
@@ -39,15 +37,12 @@ import (
 
 // Supported JOSE algorithm identifiers.
 const (
-	// AlgHS256 is HMAC using SHA-256 with a shared secret (RFC 7518 §3.2).
-	AlgHS256 = "HS256"
-
-	// AlgEdDSA is Ed25519 digital signature (RFC 8037).
-	AlgEdDSA = "EdDSA"
+	AlgHS256 = "HS256" // HMAC-SHA-256, shared secret (RFC 7518 §3.2)
+	AlgEdDSA = "EdDSA" // Ed25519 (RFC 8037)
 )
 
 // Clock returns the current time. Inject one via WithNow to make signing
-// and verification deterministic (mostly for tests).
+// and verification deterministic.
 type Clock func() time.Time
 
 // Option customises a signer or a verifier. Options that do not apply to
@@ -82,35 +77,30 @@ func newSettings(opts []Option) *settings {
 	return s
 }
 
-// WithTTL sets the signer's default validity period, used when signed
-// claims do not carry an ExpiresAt. Verifiers ignore it.
+// WithTTL sets the signer's default validity period (verifiers ignore it).
 func WithTTL(d time.Duration) Option { return func(s *settings) { s.ttl = d } }
 
-// WithIssuer sets the signer's default Issuer claim, used when signed
-// claims leave it empty. Verifiers ignore it.
+// WithIssuer sets the signer's default Issuer claim (verifiers ignore it).
 func WithIssuer(iss string) Option { return func(s *settings) { s.issuer = iss } }
 
-// WithAudience sets the signer's default Audience claim, used when signed
-// claims leave it empty. Verifiers ignore it.
+// WithAudience sets the signer's default Audience claim (verifiers ignore it).
 func WithAudience(aud ...string) Option { return func(s *settings) { s.audience = aud } }
 
-// WithLeeway sets the verifier's tolerated clock skew for exp, nbf and iat
-// checks. The default is zero: strict comparison against the verifier's
-// clock. Signers ignore it.
+// WithLeeway sets the verifier's tolerated clock skew for exp, nbf and
+// iat checks. Default is zero (signers ignore it).
 func WithLeeway(d time.Duration) Option { return func(s *settings) { s.leeway = d } }
 
-// WithExpectedIssuer pins the verifier to tokens issued by iss; tokens
-// with a different iss claim are rejected. Empty disables the check.
+// WithExpectedIssuer pins the verifier to tokens issued by iss.
 func WithExpectedIssuer(iss string) Option { return func(s *settings) { s.expectIssuer = iss } }
 
-// WithExpectedAudience pins the verifier to tokens whose aud claim contains
-// aud. Empty disables the check.
+// WithExpectedAudience pins the verifier to tokens whose aud claim
+// contains aud.
 func WithExpectedAudience(aud string) Option {
 	return func(s *settings) { s.expectAudience = aud }
 }
 
-// WithNow overrides the clock used for iat/exp arithmetic on both signers
-// and verifiers. nil restores time.Now. Mostly useful in tests.
+// WithNow overrides the clock used for iat/exp arithmetic. nil restores
+// time.Now.
 func WithNow(now Clock) Option {
 	return func(s *settings) {
 		if now == nil {
@@ -121,19 +111,23 @@ func WithNow(now Clock) Option {
 }
 
 // Signer issues compact-serialization JWTs for one pinned algorithm.
+//
+// Deprecated: use JWT (jwt.New / jwt.NewEdDSA) for new code.
 type Signer struct {
 	alg algorithm
 	set *settings
 }
 
 // Verifier validates compact-serialization JWTs for one pinned algorithm.
+//
+// Deprecated: use JWT (jwt.New / jwt.NewEdDSA) for new code.
 type Verifier struct {
 	alg algorithm
 	set *settings
 }
 
-// NewSignerHS256 returns an HS256 signer keyed with a shared secret. The
-// secret must be at least 32 bytes (the SHA-256 output size, RFC 7518 §3.2).
+// NewSignerHS256 returns an HS256 signer. The secret must be at least 32
+// bytes (RFC 7518 §3.2).
 func NewSignerHS256(key []byte, opts ...Option) (*Signer, error) {
 	alg, err := newHMACAlg(AlgHS256, key)
 	if err != nil {
@@ -142,9 +136,8 @@ func NewSignerHS256(key []byte, opts ...Option) (*Signer, error) {
 	return &Signer{alg: alg, set: newSettings(opts)}, nil
 }
 
-// NewSignerEdDSA returns an EdDSA (Ed25519) signer keyed with a private key;
-// generate one with ed25519.GenerateKey. The matching verifier takes the
-// public half only.
+// NewSignerEdDSA returns an EdDSA signer; generate one with
+// ed25519.GenerateKey. The matching verifier takes the public half only.
 func NewSignerEdDSA(key ed25519.PrivateKey, opts ...Option) (*Signer, error) {
 	alg, err := newEdDSASignAlg(key)
 	if err != nil {
@@ -163,8 +156,8 @@ func NewVerifierHS256(key []byte, opts ...Option) (*Verifier, error) {
 	return &Verifier{alg: alg, set: newSettings(opts)}, nil
 }
 
-// NewVerifierEdDSA returns an EdDSA (Ed25519) verifier keyed with the
-// issuer's public key. It cannot sign tokens.
+// NewVerifierEdDSA returns an EdDSA verifier keyed with the issuer's
+// public key. It cannot sign tokens.
 func NewVerifierEdDSA(key ed25519.PublicKey, opts ...Option) (*Verifier, error) {
 	alg, err := newEdDSAVerifyAlg(key)
 	if err != nil {
@@ -173,20 +166,19 @@ func NewVerifierEdDSA(key ed25519.PublicKey, opts ...Option) (*Verifier, error) 
 	return &Verifier{alg: alg, set: newSettings(opts)}, nil
 }
 
-// Algorithm reports the pinned JOSE alg value.
 func (s *Signer) Algorithm() string { return s.alg.name() }
-
-// Algorithm reports the pinned JOSE alg value; Verify rejects every other.
 func (v *Verifier) Algorithm() string { return v.alg.name() }
 
-// Sign marshals the claims, signs them and returns the compact JWT
-// "header.payload.signature".
+// Sign marshals the claims, signs them and returns the compact JWT.
 //
-// Defaults applied to the claims before signing: IssuedAt becomes now when
-// zero; ExpiresAt becomes IssuedAt plus the configured TTL when zero (and
-// Sign fails with ErrMissingExpiration if no TTL is configured either);
-// Issuer and Audience fall back to the configured values when empty.
+// Defaults applied before signing: IssuedAt becomes now when zero;
+// ExpiresAt becomes IssuedAt plus the configured TTL when zero (and Sign
+// fails with ErrMissingExpiration if no TTL is configured either); Issuer
+// and Audience fall back to the configured values when empty.
 func (s *Signer) Sign(claims Claims) (string, error) {
+	if claims.Subject == "" {
+		return "", ErrMissingSubject
+	}
 	now := s.set.now()
 	if claims.IssuedAt.IsZero() {
 		claims.IssuedAt = now
@@ -219,10 +211,9 @@ func (s *Signer) Sign(claims Claims) (string, error) {
 
 // Verify checks the token's structure and signature, then validates the
 // registered time claims (exp, nbf, iat, each with the configured leeway)
-// and the pinned iss/aud when configured. It returns the parsed claims,
-// with non-registered payload members available through Claims.Extra.
+// and the pinned iss/aud when configured.
 //
-// The order matters: the signature is checked before the payload is parsed,
+// Order matters: the signature is checked before the payload is parsed,
 // so untrusted input never reaches claim handling unauthenticated.
 func (v *Verifier) Verify(token string) (*Claims, error) {
 	parts := strings.Split(token, ".")
@@ -274,7 +265,6 @@ func (v *Verifier) Verify(token string) (*Claims, error) {
 	return &claims, nil
 }
 
-// validate enforces the registered time claims and pinned issuer/audience.
 func (v *Verifier) validate(c *Claims) error {
 	now := v.set.now()
 	if !c.ExpiresAt.IsZero() && now.After(c.ExpiresAt.Add(v.set.leeway)) {
@@ -295,9 +285,6 @@ func (v *Verifier) validate(c *Claims) error {
 	return nil
 }
 
-// typIsJWT reports whether the optional typ header identifies a JWT. The
-// header carries no security weight (the algorithm is pinned separately),
-// so conventional spellings are accepted and anything else fails loudly.
 func typIsJWT(typ string) bool {
 	t := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(typ)), "application/")
 	return t == "jwt"
