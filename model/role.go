@@ -1,25 +1,22 @@
 package model
 
-// RoleName is the unique name of a role.
-type RoleName = string
+// RoleName / RoleID are the unique name of a role; both spellings are kept
+// so callers can pick the one that reads best at the call site.
+type (
+	RoleName = string
+	RoleID   = RoleName
+)
 
-// RoleID is the unique name of a role. Kept as a synonym for RoleName so
-// both spellings are available to callers.
-type RoleID = RoleName
-
-// Role is a named set of permissions. A role inherits permissions of its
-// single parent (if any); a user needing to combine several permission sets
-// simply holds several roles.
+// Role is a named set of permissions; it inherits from a single Parent.
 type Role struct {
 	Name        RoleID       `json:"name"`
 	Permissions []Permission `json:"permissions"`
-	// Parent is the role this role inherits from; empty means no parent.
-	Parent RoleID `json:"parent,omitempty"`
+	Parent      RoleID       `json:"parent,omitempty"`
 }
 
 func (r *Role) HasPermission(p Permission) bool {
-	for _, granted := range r.Permissions {
-		if granted.Matches(p) {
+	for _, g := range r.Permissions {
+		if g.Matches(p) {
 			return true
 		}
 	}

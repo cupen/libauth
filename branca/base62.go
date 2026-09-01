@@ -5,12 +5,10 @@ import (
 	"math/big"
 )
 
-// base62Alphabet is the character set the branca spec mandates for the
-// string representation of a token: digits, then uppercase, then lowercase.
+// base62Alphabet is the character set the branca spec mandates: digits,
+// then uppercase, then lowercase.
 const base62Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
-// base62Index maps each alphabet byte to its digit value; -1 means the byte
-// is not part of the alphabet.
 var base62Index = func() (idx [256]int8) {
 	for i := range idx {
 		idx[i] = -1
@@ -28,10 +26,10 @@ var (
 	base62Digit = new(big.Int)
 )
 
-// base62Encode renders the token bytes in base62. The branca token is
-// treated as one big-endian number and converted as a whole — the same
-// numeric conversion every conformant implementation uses (leading zero
-// bytes cannot occur: the version byte 0xBA is always first).
+// base62Encode treats the token bytes as one big-endian integer and
+// converts the whole thing (the same numeric conversion every conformant
+// implementation uses). Leading zero bytes cannot occur: the version byte
+// 0xBA is always first.
 func base62Encode(src []byte) string {
 	if len(src) == 0 {
 		return ""
@@ -49,8 +47,8 @@ func base62Encode(src []byte) string {
 	return string(digits)
 }
 
-// base62Decode parses a base62 token back into bytes. Invalid characters —
-// including sign prefixes big.Int would otherwise accept — are rejected.
+// base62Decode parses a base62 token. Invalid characters — including sign
+// prefixes big.Int would otherwise accept — are rejected.
 func base62Decode(s string) ([]byte, error) {
 	if s == "" {
 		return nil, errNonBase62

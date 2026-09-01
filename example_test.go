@@ -1,8 +1,8 @@
 package libauth_test
 
-// Example functions are runnable documentation: `go test` executes them and
-// verifies the printed output, and godoc renders them next to the API they
-// demonstrate.
+// Example functions are runnable documentation: `go test` executes them
+// and verifies the printed output, and godoc renders them next to the API
+// they demonstrate.
 
 import (
 	"errors"
@@ -13,7 +13,6 @@ import (
 	"github.com/cupen/libauth"
 )
 
-// perm parses a "resource:action" string for the examples.
 func perm(s string) libauth.Permission {
 	p, err := libauth.ParsePermission(s)
 	if err != nil {

@@ -24,7 +24,6 @@ func main() {
 		{Resource: "article", Action: "read"},
 		{Resource: "whoami", Action: "read"},
 	}, ""))
-	// publisher inherits every editor permission and adds its own.
 	must(m.CreateRole("publisher",
 		[]libauth.Permission{{Resource: "article", Action: "publish"}}, "editor"))
 	must(m.CreateRole("admin", []libauth.Permission{{Resource: "*"}}, ""))

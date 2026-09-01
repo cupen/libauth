@@ -18,7 +18,6 @@ func (e *Enforcer) validateInheritance(r *model.Role) error {
 		return err
 	}
 
-	// Walk up from r.Parent; reaching r again closes a cycle.
 	name := r.Parent
 	for depth := 1; name != ""; depth++ {
 		if name == r.Name {
@@ -30,7 +29,8 @@ func (e *Enforcer) validateInheritance(r *model.Role) error {
 		role, err := e.store.GetRole(name)
 		if err != nil {
 			if err == store.ErrRoleNotFound {
-				break // dangling ancestor: tolerated, can only come from external store edits
+				// dangling ancestor: tolerated, can only come from external store edits
+				break
 			}
 			return err
 		}

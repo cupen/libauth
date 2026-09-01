@@ -14,7 +14,6 @@ type MemoryStore struct {
 	roles map[model.RoleID]*model.Role
 }
 
-// NewMemoryStore returns an empty MemoryStore.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		users: make(map[model.UserID]*model.User),

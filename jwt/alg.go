@@ -12,30 +12,22 @@ import (
 var b64 = base64.RawURLEncoding
 
 func b64encode(b []byte) string { return b64.EncodeToString(b) }
-
 func b64decode(s string) ([]byte, error) { return b64.DecodeString(s) }
 
-// algorithm is the pinned signing scheme behind a Signer or Verifier. Every
-// implementation covers exactly one JOSE alg value, which is how algorithm
-// confusion is ruled out structurally: a Verifier simply has no code path
-// for any other algorithm.
+// algorithm is the pinned signing scheme behind a Signer or Verifier. Each
+// implementation covers exactly one JOSE alg value, which is how
+// cross-algorithm confusion is ruled out structurally.
 type algorithm interface {
-	// name is the JOSE "alg" value this implementation signs with and
-	// (on the verifier side) exclusively accepts.
 	name() string
-	// header is the JOSE header emitted when signing.
 	header() []byte
-	// sign signs the signing input ("header.payload").
 	sign(input []byte) ([]byte, error)
-	// verify checks a signature over the signing input.
 	verify(input, sig []byte) error
 }
 
 // minHMACKeySize is the SHA-256 output size; RFC 7518 §3.2 says HS256 keys
-// SHOULD have at least this many bytes (and MUST NOT be shorter).
+// SHOULD have at least this many bytes.
 const minHMACKeySize = 32
 
-// hmacAlg implements HS256 with a shared secret.
 type hmacAlg struct {
 	algName string
 	key     []byte
@@ -66,8 +58,6 @@ func (a hmacAlg) verify(input, sig []byte) error {
 	return nil
 }
 
-// eddsaAlg implements EdDSA (Ed25519). Verifiers hold only the public key;
-// the private part stays empty.
 type eddsaAlg struct {
 	priv ed25519.PrivateKey // nil for verify-only instances
 	pub  ed25519.PublicKey

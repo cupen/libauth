@@ -1,6 +1,5 @@
-// Package model defines the core RBAC data types: users, roles and
-// permissions. The types are free of persistence and HTTP concerns so they
-// can be serialized, cached or transported as-is.
+// Package model defines the RBAC data types. Persistence and HTTP live
+// elsewhere so these types can be serialized, cached or transported as-is.
 package model
 
 import (
@@ -9,20 +8,14 @@ import (
 	"strings"
 )
 
-// Permission is a {Resource, Action} pair, e.g. {Resource: "article", Action:
-// "create"}.
-//
-// Wildcards: Resource=="*" alone grants every permission; either field may
-// be "*" to match anything in that position (e.g. {Resource: "article",
-// Action: "*"} matches every "article:*" permission).
+// Permission is a {Resource, Action} pair. Either field may be "*" as a
+// wildcard; {Resource: "*"} alone grants everything.
 type Permission struct {
 	Resource string `json:"resource"`
 	Action   string `json:"action"`
 }
 
-// ParsePermission parses a "resource:action" string. The special case "*"
-// parses as {Resource: "*"} (the global wildcard); otherwise both segments
-// must be non-empty.
+// ParsePermission parses "resource:action" — "*" parses as {Resource: "*"}.
 func ParsePermission(s string) (Permission, error) {
 	if s == "" {
 		return Permission{}, errors.New("empty permission")
@@ -43,13 +36,9 @@ func ParsePermission(s string) (Permission, error) {
 	}
 }
 
-// String renders the permission in canonical "resource:action" form.
-func (p Permission) String() string {
-	return p.Resource + ":" + p.Action
-}
+func (p Permission) String() string { return p.Resource + ":" + p.Action }
 
-// Matches reports whether p (a granted pattern) covers required (a concrete
-// permission being checked).
+// Matches reports whether p (a granted pattern) covers required.
 func (p Permission) Matches(required Permission) bool {
 	if p == required {
 		return true
@@ -60,13 +49,9 @@ func (p Permission) Matches(required Permission) bool {
 	if p.Resource != required.Resource {
 		return false
 	}
-	if p.Action == "*" || p.Action == required.Action {
-		return true
-	}
-	return false
+	return p.Action == "*" || p.Action == required.Action
 }
 
-// MatchesAny reports whether p grants any of the required permissions.
 func (p Permission) MatchesAny(required ...Permission) bool {
 	for _, r := range required {
 		if p.Matches(r) {
@@ -76,24 +61,19 @@ func (p Permission) MatchesAny(required ...Permission) bool {
 	return false
 }
 
-// Valid reports whether the permission is well-formed (resource non-empty,
-// action non-empty, or both fields "*").
+// Valid reports whether the permission is well-formed. {Resource: "*"} is
+// valid even with empty Action; everything else needs both fields.
 func (p Permission) Valid() bool {
 	if p.Resource == "" {
 		return false
 	}
-	if p.Resource != "*" && p.Action == "" {
-		return false
-	}
-	return true
+	return p.Resource == "*" || p.Action != ""
 }
 
-// MarshalText renders the permission as a "resource:action" string.
 func (p Permission) MarshalText() ([]byte, error) {
 	return []byte(p.String()), nil
 }
 
-// UnmarshalText parses a "resource:action" string.
 func (p *Permission) UnmarshalText(text []byte) error {
 	parsed, err := ParsePermission(string(text))
 	if err != nil {

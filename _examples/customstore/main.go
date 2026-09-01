@@ -1,10 +1,9 @@
 // Command customstore shows how to plug a custom persistence layer into
-// libauth by implementing the Store interface. This demo persists the RBAC
-// world to a JSON file: it builds roles and users through one enforcer, then
-// reloads the same file into a second, independent enforcer.
+// libauth by implementing the Store interface. The RBAC world is written to
+// a JSON file by one enforcer and reloaded by a second, independent one.
 //
-// Note how thin the Store implementation is: the contract only covers
-// whole-object CRUD — relationship mutations are handled by authz.Enforcer.
+// The Store contract is just whole-object CRUD — relationship mutations
+// are handled by authz.Enforcer.
 //
 //	go run ./_examples/customstore
 package main
@@ -19,8 +18,7 @@ import (
 	"github.com/cupen/libauth"
 )
 
-// fileStore persists the RBAC world as JSON after every mutation. A
-// production store would implement Store directly against a database.
+// fileStore persists the RBAC world as JSON after every mutation.
 type fileStore struct {
 	*libauth.MemoryStore
 	path string
@@ -76,8 +74,7 @@ func (fs *fileStore) save() error {
 	return os.WriteFile(fs.path, raw, 0o600)
 }
 
-// Read operations are inherited from the embedded MemoryStore; each mutation
-// writes through to disk.
+// Read operations are inherited from the embedded MemoryStore.
 
 func (fs *fileStore) CreateUser(u *libauth.User) error {
 	if err := fs.MemoryStore.CreateUser(u); err != nil {

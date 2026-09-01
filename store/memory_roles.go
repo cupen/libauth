@@ -42,8 +42,8 @@ func (s *MemoryStore) GetRole(name model.RoleID) (*model.Role, error) {
 	return cloneRole(r), nil
 }
 
-// DeleteRole does not cascade-detach the role from users or from other
-// roles' parent lists — that bookkeeping is the caller's job.
+// DeleteRole does not cascade-detach the role from users or other roles'
+// Parent lists — that bookkeeping is the caller's job.
 func (s *MemoryStore) DeleteRole(name model.RoleID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

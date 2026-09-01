@@ -10,7 +10,7 @@ var (
 	ErrInvalidPermission = errors.New("libauth: invalid permission")
 )
 
-// PermissionDeniedError carries the details of a failed authorization check.
+// PermissionDeniedError carries the context of a failed authorization.
 type PermissionDeniedError struct {
 	UserID   UserID
 	User     *User

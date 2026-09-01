@@ -7,8 +7,8 @@ import (
 	"github.com/cupen/libauth/store"
 )
 
-// RolesFor returns the user's effective role chain (direct roles plus their
-// single-parent ancestor chains, deduplicated, sorted).
+// RolesFor returns the user's effective role chain (direct roles plus
+// their single-parent ancestors, deduplicated, sorted).
 func (e *Enforcer) RolesFor(id model.UserID) ([]model.RoleID, error) {
 	u, err := e.store.GetUser(id)
 	if err != nil {
@@ -27,9 +27,8 @@ func (e *Enforcer) resolveRoles(u *model.User) ([]model.RoleID, error) {
 		}
 	}
 
-	// Walk up the single-parent chain of every direct role. Termination is
-	// guaranteed: Parent=="" ends a chain and seen breaks cycles. Write-time
-	// validation bounds chain length, so no depth check is needed here.
+	// Walk up the single-parent chain. Termination is guaranteed: an
+	// empty Parent ends a chain, and `seen` breaks cycles.
 	for i := 0; i < len(queue); i++ {
 		role, err := e.store.GetRole(queue[i])
 		if err != nil {

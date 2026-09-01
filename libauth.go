@@ -11,10 +11,7 @@
 //
 // Stateless identity tokens come in two flavours: signed JWTs in the jwt
 // subpackage (HS256 / Ed25519, stdlib only) and encrypted branca tokens in
-// the branca subpackage (XChaCha20-Poly1305, golang.org/x/crypto). Both
-// expose Encode / Decode; the middleware takes a plain net/http
-// IdentityFunc that performs whatever token verification the deployment
-// needs (typically extracting the bearer token and reading its sub claim).
+// the branca subpackage (XChaCha20-Poly1305, golang.org/x/crypto).
 package libauth
 
 import (
@@ -35,8 +32,6 @@ type (
 // ParsePermission parses a "resource:action" string into a Permission.
 func ParsePermission(s string) (Permission, error) { return model.ParsePermission(s) }
 
-// Store is the persistence contract; MemoryStore is its in-memory reference
-// implementation.
 type (
 	Store       = store.Store
 	MemoryStore = store.MemoryStore
@@ -44,7 +39,6 @@ type (
 
 var NewMemoryStore = store.NewMemoryStore
 
-// Enforcer is the high-level RBAC API.
 type (
 	Enforcer = authz.Enforcer
 	Option   = authz.Option
