@@ -15,14 +15,16 @@ func (e *Enforcer) CreateUser(id model.UserID, roles ...model.RoleID) error {
 	for _, role := range roles {
 		e.grantHolder(id, role)
 	}
+	e.setDirectRoles(id, roles)
 	return nil
 }
 
+// DeleteUser evicts cache and holders eagerly so observers stay consistent
+// even if DeleteUser fails.
 func (e *Enforcer) DeleteUser(id model.UserID) error {
-	// Evict cache and holders eagerly; doing it before the store call keeps
-	// observers consistent if DeleteUser fails.
 	e.cacheMu.Lock()
 	delete(e.cache, id)
+	delete(e.directRoles, id)
 	for _, holders := range e.roleHolders {
 		delete(holders, id)
 	}
@@ -32,8 +34,7 @@ func (e *Enforcer) DeleteUser(id model.UserID) error {
 }
 
 func (e *Enforcer) GetUser(id model.UserID) (*model.User, error) { return e.store.GetUser(id) }
-
-func (e *Enforcer) ListUsers() ([]*model.User, error) { return e.store.ListUsers() }
+func (e *Enforcer) ListUsers() ([]*model.User, error)             { return e.store.ListUsers() }
 
 func (e *Enforcer) AssignRole(id model.UserID, role model.RoleID) error {
 	if _, err := e.store.GetRole(role); err != nil {
@@ -53,6 +54,7 @@ func (e *Enforcer) AssignRole(id model.UserID, role model.RoleID) error {
 		return err
 	}
 	e.grantHolder(id, role)
+	e.setDirectRoles(id, u.Roles)
 	e.invalidateUser(id)
 	return nil
 }
@@ -76,6 +78,7 @@ func (e *Enforcer) RevokeRole(id model.UserID, role model.RoleID) error {
 		return err
 	}
 	e.revokeHolder(id, role)
+	e.setDirectRoles(id, u.Roles)
 	e.invalidateUser(id)
 	return nil
 }

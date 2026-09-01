@@ -25,7 +25,6 @@ type Authorizer interface {
 	GetUser(id model.UserID) (*model.User, error)
 }
 
-// Middleware guards http.Handler chains with libauth checks.
 type Middleware struct {
 	manager  Authorizer
 	identity IdentityFunc
@@ -68,6 +67,9 @@ func (mw *Middleware) pass(w http.ResponseWriter, r *http.Request, u *model.User
 }
 
 func (mw *Middleware) identify(w http.ResponseWriter, r *http.Request) (*model.User, bool) {
+	if u := UserFromContext(r.Context()); u != nil && alreadyResolved(r.Context()) {
+		return u, true
+	}
 	id, err := mw.identity(r)
 	if err != nil {
 		mw.fail(w, r, http.StatusUnauthorized, err)

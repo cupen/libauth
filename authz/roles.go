@@ -24,12 +24,10 @@ func (e *Enforcer) CreateRole(name model.RoleID, permissions []model.Permission,
 	if err := e.validateInheritance(r); err != nil {
 		return err
 	}
-	// A brand-new role has no holders yet — cache needs no invalidation.
 	return e.store.CreateRole(r)
 }
 
-// UpdateRole replaces a role's permissions and parent. Cycles and
-// over-deep chains are rejected.
+// UpdateRole replaces a role's permissions and parent.
 func (e *Enforcer) UpdateRole(name model.RoleID, permissions []model.Permission, parent model.RoleID) error {
 	if name == "" {
 		return store.ErrEmptyName
@@ -60,8 +58,7 @@ func (e *Enforcer) DeleteRole(name model.RoleID) error {
 	if _, err := e.store.GetRole(name); err != nil {
 		return err
 	}
-	// Use the holders index to scope the cascade-detach to users that
-	// actually held the role, instead of scanning every user.
+	// Scope the cascade-detach to users that actually held the role.
 	e.cacheMu.RLock()
 	holders := make([]model.UserID, 0, len(e.roleHolders[name]))
 	for uid := range e.roleHolders[name] {
@@ -87,6 +84,7 @@ func (e *Enforcer) DeleteRole(name model.RoleID) error {
 			}
 		}
 		e.revokeHolder(uid, name)
+		e.setDirectRoles(uid, u.Roles)
 	}
 
 	roles, err := e.store.ListRoles()
@@ -103,8 +101,6 @@ func (e *Enforcer) DeleteRole(name model.RoleID) error {
 		}
 	}
 
-	// Drop any holders still listed for the deleted role and the per-user
-	// caches that were about to be re-derived anyway.
 	e.cacheMu.Lock()
 	delete(e.roleHolders, name)
 	e.cacheMu.Unlock()
@@ -115,8 +111,7 @@ func (e *Enforcer) DeleteRole(name model.RoleID) error {
 }
 
 func (e *Enforcer) GetRole(name model.RoleID) (*model.Role, error) { return e.store.GetRole(name) }
-
-func (e *Enforcer) ListRoles() ([]*model.Role, error) { return e.store.ListRoles() }
+func (e *Enforcer) ListRoles() ([]*model.Role, error)             { return e.store.ListRoles() }
 
 func (e *Enforcer) GrantPermission(role model.RoleID, p model.Permission) error {
 	if !p.Valid() {
@@ -161,10 +156,9 @@ func (e *Enforcer) RevokePermission(role model.RoleID, p model.Permission) error
 	return nil
 }
 
-// SetParent makes role inherit from parent. A role has at most one parent:
+// SetParent makes role inherit from parent. A role has at most one parent;
 // setting a new parent replaces the previous one, and an empty parent
-// detaches the role from any inheritance chain. Cycles and over-deep chains
-// are rejected.
+// detaches the role from any inheritance chain.
 func (e *Enforcer) SetParent(role, parent model.RoleID) error {
 	r, err := e.store.GetRole(role)
 	if err != nil {

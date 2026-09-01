@@ -14,10 +14,6 @@ type (
 
 // NewMiddleware builds middleware for the enforcer. A nil identity defaults
 // to HeaderIdentity("").
-//
-// The explicit nil check here prevents a typed-nil *Enforcer from slipping
-// through as a non-nil Authorizer interface value inside the middleware
-// subpackage.
 func NewMiddleware(m *Enforcer, identity IdentityFunc) (*Middleware, error) {
 	if m == nil {
 		return nil, ErrInvalidIdentityFunc
