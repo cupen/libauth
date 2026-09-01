@@ -105,19 +105,16 @@ func TestJWTIdentityExtraction(t *testing.T) {
 	}
 }
 
-func TestJWTIdentityWithoutSubject(t *testing.T) {
+func TestJWTSignWithoutSubjectRejected(t *testing.T) {
 	s, err := jwt.NewSignerHS256([]byte(testJWTSecret), jwt.WithTTL(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := s.Sign(jwt.Claims{}) // no sub: nothing to identify
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = jwtIdentityFunc(newTestVerifier(t))(bearerRequest(t, token))
-	if err == nil || !strings.Contains(err.Error(), "sub") {
-		t.Fatalf("identity: err = %v, want an error mentioning sub", err)
+	// Sign must refuse to issue a token with no Subject: libauth uses sub
+	// as the user ID, so a token without it has nothing downstream can
+	// authenticate against.
+	if _, err := s.Sign(jwt.Claims{}); !errors.Is(err, jwt.ErrMissingSubject) {
+		t.Fatalf("Sign(empty): err = %v, want ErrMissingSubject", err)
 	}
 }
 

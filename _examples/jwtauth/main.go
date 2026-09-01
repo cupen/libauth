@@ -1,11 +1,11 @@
 // Command jwtauth demonstrates libauth with JWT bearer authentication:
 // POST /login issues a short-lived HS256 token naming the user (sub), and
-// every protected route verifies that token through a small IdentityFunc
-// that calls verifier.Verify and reads the sub claim.
+// every protected route verifies it through a small IdentityFunc that
+// reads the sub claim.
 //
-// Roles and permissions live server-side in the Enforcer, so changing a
-// user's roles takes effect on their next request — tokens stay valid, the
-// authority behind them does not.
+// Roles and permissions live server-side, so changing a user's roles
+// takes effect on their next request — tokens stay valid, the authority
+// behind them does not.
 //
 // The demo accepts any known username without a password; wire a real
 // credential check into the login handler in production.
@@ -42,29 +42,30 @@ const issuer = "libauth-jwtauth-demo"
 
 const ttl = 15 * time.Minute
 
-// secret must be at least 32 bytes for HS256; load it from configuration in
-// production instead of hardcoding it.
+// secret must be at least 32 bytes for HS256 (RFC 7518 §3.2).
 var secret = []byte("demo-secret-0123456789abcdef-demo-secret-32")
 
 func main() {
 	m := seed()
 
-	signer, err := jwt.NewSignerHS256(secret, jwt.WithTTL(ttl), jwt.WithIssuer(issuer))
-	if err != nil {
-		log.Fatal(err)
-	}
-	verifier, err := jwt.NewVerifierHS256(secret, jwt.WithExpectedIssuer(issuer))
+	// One symmetric JWT for the whole server. WithTTL / WithIssuer flow to
+	// the signer, WithExpectedIssuer to the verifier.
+	auth, err := jwt.New(secret,
+		jwt.WithTTL(ttl),
+		jwt.WithIssuer(issuer),
+		jwt.WithExpectedIssuer(issuer),
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	mw, err := libauth.NewMiddleware(m, jwtIdentity(verifier))
+	mw, err := libauth.NewMiddleware(m, jwtIdentity(auth))
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("POST /login", loginHandler(m, signer))
+	mux.Handle("POST /login", loginHandler(m, auth))
 	mux.Handle("GET /whoami", mw.Require(perm("whoami:read"))(http.HandlerFunc(whoami)))
 	mux.Handle("GET /articles", mw.Require(perm("article:read"))(http.HandlerFunc(listArticles)))
 	mux.Handle("POST /articles", mw.Require(perm("article:create"))(http.HandlerFunc(createArticle)))
@@ -74,11 +75,9 @@ func main() {
 }
 
 // jwtIdentity builds the IdentityFunc the middleware uses to name the
-// calling user. Extracts the bearer token from the Authorization header,
-// verifies it, and returns the sub claim. Verification errors (malformed,
-// bad signature, expired, missing subject) all surface as 401 through the
-// middleware — handlers never see an unauthenticated request.
-func jwtIdentity(v *jwt.Verifier) libauth.IdentityFunc {
+// calling user. Decode errors (malformed, bad signature, expired) all
+// surface as 401.
+func jwtIdentity(auth *jwt.JWT) libauth.IdentityFunc {
 	return func(r *http.Request) (libauth.UserID, error) {
 		h := r.Header.Get("Authorization")
 		const prefix = "Bearer "
@@ -89,20 +88,16 @@ func jwtIdentity(v *jwt.Verifier) libauth.IdentityFunc {
 		if token == "" {
 			return "", errors.New("missing bearer token")
 		}
-		claims, err := v.Verify(token)
+		claims, err := auth.Decode(token)
 		if err != nil {
 			return "", err
-		}
-		if claims.Subject == "" {
-			return "", errors.New("token has no sub claim")
 		}
 		return libauth.UserID(claims.Subject), nil
 	}
 }
 
-// loginHandler checks the username (no password in this demo) and issues a
-// token whose sub claim is the user ID.
-func loginHandler(m *libauth.Enforcer, signer *jwt.Signer) http.HandlerFunc {
+// loginHandler issues a token whose sub claim is the username.
+func loginHandler(m *libauth.Enforcer, auth *jwt.JWT) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Username string `json:"username"`
@@ -115,7 +110,7 @@ func loginHandler(m *libauth.Enforcer, signer *jwt.Signer) http.HandlerFunc {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unknown user"})
 			return
 		}
-		token, err := signer.Sign(jwt.Claims{Subject: in.Username})
+		token, err := auth.Encode(jwt.Claims{Subject: in.Username})
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return

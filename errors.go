@@ -32,6 +32,7 @@ var (
 	ErrUnexpectedTyp       = jwt.ErrUnexpectedTyp
 	ErrUnsupportedCrit     = jwt.ErrUnsupportedCrit
 	ErrMissingExpiration   = jwt.ErrMissingExpiration
+	ErrMissingSubject      = jwt.ErrMissingSubject
 	ErrReservedClaim       = jwt.ErrReservedClaim
 	ErrIssuerMismatch      = jwt.ErrIssuerMismatch
 	ErrAudienceMismatch    = jwt.ErrAudienceMismatch
