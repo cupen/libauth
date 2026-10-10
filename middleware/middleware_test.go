@@ -60,28 +60,52 @@ func TestGuardsWithCustomAuthorizer(t *testing.T) {
 }
 
 func TestNewMiddlewareNilAuthorizer(t *testing.T) {
-	if _, err := NewMiddleware(nil, nil); !errors.Is(err, ErrInvalidIdentityFunc) {
+	if _, err := NewMiddleware(nil, HeaderIdentity("")); !errors.Is(err, ErrNilAuthorizer) {
 		t.Errorf("nil authorizer should be rejected, got %v", err)
 	}
 }
 
-func TestNilIdentityDefaultsToHeader(t *testing.T) {
-	mw, err := NewMiddleware(&stubAuthorizer{}, nil)
-	if err != nil {
-		t.Fatal(err)
+func TestNewMiddlewareNilIdentityRejected(t *testing.T) {
+	if _, err := NewMiddleware(&stubAuthorizer{}, nil); !errors.Is(err, ErrNilIdentityFunc) {
+		t.Errorf("nil identity must be rejected — no silent insecure default, got %v", err)
 	}
-	if mw.identity == nil {
-		t.Fatal("nil identity must default to HeaderIdentity")
-	}
-	if _, err := mw.identity(httptest.NewRequest("GET", "/", nil)); err == nil {
-		t.Error("default identity must reject requests without the header")
+}
+
+func TestHeaderIdentity(t *testing.T) {
+	identity := HeaderIdentity("")
+	if _, err := identity(httptest.NewRequest("GET", "/", nil)); err == nil {
+		t.Error("identity must reject requests without the header")
 	}
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("X-User-ID", "u")
-	if id, err := mw.identity(req); err != nil || id != "u" {
-		t.Errorf("default identity should read X-User-ID, got %q %v", id, err)
+	if id, err := identity(req); err != nil || id != "u" {
+		t.Errorf("identity should read X-User-ID, got %q %v", id, err)
 	}
 }
+
+// TestWithOnError replaces the JSON error body with a custom renderer.
+func TestWithOnError(t *testing.T) {
+	var gotStatus int
+	mw, err := NewMiddleware(&stubAuthorizer{denied: model.ErrPermissionDenied},
+		HeaderIdentity(""),
+		WithOnError(func(w http.ResponseWriter, r *http.Request, status int, err error) {
+			gotStatus = status
+			w.WriteHeader(status)
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("X-User-ID", "u")
+	rec := httptest.NewRecorder()
+	mw.Require(model.Permission{Resource: "any", Action: "thing"})(okHandler).
+		ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || gotStatus != http.StatusForbidden {
+		t.Errorf("custom error handler: code=%d gotStatus=%d", rec.Code, gotStatus)
+	}
+}
+
+var okHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
 
 func TestContextRoundTrip(t *testing.T) {
 	if UserFromContext(t.Context()) != nil {

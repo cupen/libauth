@@ -58,12 +58,8 @@ func (mw *Middleware) RequireAny(perms ...model.Permission) func(http.Handler) h
 				}
 			}
 			if denied {
-				required := model.Permission{Resource: "<any>"}
-				if len(perms) == 1 {
-					required = perms[0]
-				}
 				mw.fail(w, r, http.StatusForbidden,
-					&model.PermissionDeniedError{UserID: u.ID, User: u, Required: required})
+					&model.PermissionDeniedError{UserID: u.ID, User: u, RequiredAny: perms})
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(WithUser(r.Context(), u)))
@@ -85,9 +81,8 @@ func (mw *Middleware) RequireRole(role model.RoleID) func(http.Handler) http.Han
 				return
 			}
 			if !granted {
-				required, _ := model.ParsePermission("role:" + string(role))
 				mw.fail(w, r, http.StatusForbidden,
-					&model.PermissionDeniedError{UserID: u.ID, User: u, Required: required})
+					&model.PermissionDeniedError{UserID: u.ID, User: u, RequiredRole: role})
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(WithUser(r.Context(), u)))

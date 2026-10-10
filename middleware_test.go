@@ -49,7 +49,7 @@ func newTestEnforcer(t *testing.T) *Enforcer {
 		t.Fatal(err)
 	}
 
-	users := map[string][]RoleName{
+	users := map[string][]RoleID{
 		"alice": {"admin"},
 		"bob":   {"editor", "viewer"},
 		"carol": {"viewer"},
@@ -91,7 +91,7 @@ func TestMiddlewareRequire(t *testing.T) {
 
 func TestMiddlewareRequireAllAnyRole(t *testing.T) {
 	e := newTestEnforcer(t)
-	mw, _ := NewMiddleware(e, nil)
+	mw, _ := NewMiddleware(e, HeaderIdentity(""))
 
 	all := mw.RequireAll(perm("article:create"), perm("article:read"))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	if rec := doReq(t, all, "bob"); rec.Code != http.StatusOK {
@@ -117,7 +117,7 @@ func TestMiddlewareRequireAllAnyRole(t *testing.T) {
 
 func TestMiddlewareRequireAnyWithoutPermissions(t *testing.T) {
 	e := newTestEnforcer(t)
-	mw, _ := NewMiddleware(e, nil)
+	mw, _ := NewMiddleware(e, HeaderIdentity(""))
 
 	handler := mw.RequireAny()(okHandler)
 	// Misconfiguration must fail closed with 403 — never panic.
@@ -128,7 +128,7 @@ func TestMiddlewareRequireAnyWithoutPermissions(t *testing.T) {
 
 func TestMiddlewareRequireAllWithoutPermissions(t *testing.T) {
 	e := newTestEnforcer(t)
-	mw, _ := NewMiddleware(e, nil)
+	mw, _ := NewMiddleware(e, HeaderIdentity(""))
 
 	handler := mw.RequireAll()(okHandler)
 	// Vacuously true: nothing is required, so everyone passes.
@@ -139,7 +139,7 @@ func TestMiddlewareRequireAllWithoutPermissions(t *testing.T) {
 
 func TestMiddlewareRequireRoleUnknownUser(t *testing.T) {
 	e := newTestEnforcer(t)
-	mw, _ := NewMiddleware(e, nil)
+	mw, _ := NewMiddleware(e, HeaderIdentity(""))
 
 	handler := mw.RequireRole("admin")(okHandler)
 	if rec := doReq(t, handler, "ghost"); rec.Code != http.StatusUnauthorized {
@@ -148,8 +148,14 @@ func TestMiddlewareRequireRoleUnknownUser(t *testing.T) {
 }
 
 func TestMiddlewareNewMiddlewareNilEnforcer(t *testing.T) {
-	if _, err := NewMiddleware(nil, nil); !errors.Is(err, ErrInvalidIdentityFunc) {
+	if _, err := NewMiddleware(nil, HeaderIdentity("")); !errors.Is(err, ErrNilAuthorizer) {
 		t.Errorf("nil enforcer should be rejected, got %v", err)
+	}
+}
+
+func TestMiddlewareNilIdentityRejected(t *testing.T) {
+	if _, err := NewMiddleware(newTestEnforcer(t), nil); !errors.Is(err, ErrNilIdentityFunc) {
+		t.Errorf("nil identity must be rejected, got %v", err)
 	}
 }
 
@@ -164,7 +170,7 @@ func (f *failingStore) GetUser(id UserID) (*User, error) {
 
 func TestMiddlewareInternalError(t *testing.T) {
 	e := New(WithStore(&failingStore{NewMemoryStore()}))
-	mw, _ := NewMiddleware(e, nil)
+	mw, _ := NewMiddleware(e, HeaderIdentity(""))
 
 	handler := mw.Require(perm("article:read"))(okHandler)
 	if rec := doReq(t, handler, "bob"); rec.Code != http.StatusInternalServerError {
@@ -174,13 +180,15 @@ func TestMiddlewareInternalError(t *testing.T) {
 
 func TestMiddlewareCustomIdentityAndOnError(t *testing.T) {
 	e := newTestEnforcer(t)
-	mw, _ := NewMiddleware(e, func(r *http.Request) (UserID, error) {
-		return r.Header.Get("Authorization"), nil
-	})
 	called := false
-	mw.OnError = func(w http.ResponseWriter, r *http.Request, status int, err error) {
+	mw, err := NewMiddleware(e, func(r *http.Request) (UserID, error) {
+		return r.Header.Get("Authorization"), nil
+	}, WithOnError(func(w http.ResponseWriter, r *http.Request, status int, err error) {
 		called = true
 		w.WriteHeader(status)
+	}))
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	handler := mw.Require(perm("article:read"))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))

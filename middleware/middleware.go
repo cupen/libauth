@@ -15,7 +15,16 @@ import (
 	"github.com/cupen/libauth/store"
 )
 
-var ErrInvalidIdentityFunc = errors.New("libauth: identity func is required")
+var (
+	// ErrNilAuthorizer rejects middleware construction without an
+	// authorizer to consult.
+	ErrNilAuthorizer = errors.New("libauth: authorizer is required")
+	// ErrNilIdentityFunc rejects middleware construction without an
+	// explicit identity source. There is no silent default: wiring the
+	// identity (HeaderIdentity, a bearer-token parser, ...) is a decision
+	// the caller must make on purpose.
+	ErrNilIdentityFunc = errors.New("libauth: identity func is required")
+)
 
 // Authorizer is the subset of the permission API the guards depend on.
 type Authorizer interface {
@@ -25,24 +34,42 @@ type Authorizer interface {
 	GetUser(id model.UserID) (*model.User, error)
 }
 
+// ErrorHandler fully renders an error response. status is the suggested
+// HTTP status code (401, 403 or 500).
+type ErrorHandler func(w http.ResponseWriter, r *http.Request, status int, err error)
+
 type Middleware struct {
 	manager  Authorizer
 	identity IdentityFunc
-	// OnError, when set, fully handles error responses. status is the
-	// suggested HTTP status code (401, 403 or 500).
-	OnError func(w http.ResponseWriter, r *http.Request, status int, err error)
+	onError  ErrorHandler
 }
 
-// NewMiddleware builds middleware for the authorizer. A nil identity
-// defaults to HeaderIdentity("").
-func NewMiddleware(m Authorizer, identity IdentityFunc) (*Middleware, error) {
+// Option customises a Middleware.
+type Option func(*Middleware)
+
+// WithOnError replaces the default JSON error response with a custom
+// renderer (e.g. plain-text or an HTML page).
+func WithOnError(h ErrorHandler) Option {
+	return func(mw *Middleware) { mw.onError = h }
+}
+
+// NewMiddleware builds middleware for the authorizer. identity must be
+// non-nil — HeaderIdentity("") is the demo identity; production wires a
+// real one (see _examples/jwtauth).
+func NewMiddleware(m Authorizer, identity IdentityFunc, opts ...Option) (*Middleware, error) {
 	if m == nil {
-		return nil, ErrInvalidIdentityFunc
+		return nil, ErrNilAuthorizer
 	}
 	if identity == nil {
-		identity = HeaderIdentity("")
+		return nil, ErrNilIdentityFunc
 	}
-	return &Middleware{manager: m, identity: identity}, nil
+	mw := &Middleware{manager: m, identity: identity}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(mw)
+		}
+	}
+	return mw, nil
 }
 
 func (mw *Middleware) authorize(w http.ResponseWriter, r *http.Request, perm model.Permission) (*model.User, bool) {
@@ -88,8 +115,8 @@ func (mw *Middleware) identify(w http.ResponseWriter, r *http.Request) (*model.U
 }
 
 func (mw *Middleware) fail(w http.ResponseWriter, r *http.Request, status int, err error) {
-	if mw.OnError != nil {
-		mw.OnError(w, r, status, err)
+	if mw.onError != nil {
+		mw.onError(w, r, status, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
