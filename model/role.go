@@ -1,11 +1,7 @@
 package model
 
-// RoleName / RoleID are the unique name of a role; both spellings are kept
-// so callers can pick the one that reads best at the call site.
-type (
-	RoleName = string
-	RoleID   = RoleName
-)
+// RoleID is the unique identifier of a role.
+type RoleID = string
 
 // Role is a named set of permissions; it inherits from a single Parent.
 type Role struct {
