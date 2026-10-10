@@ -13,22 +13,22 @@ import (
 
 const testJWTSecret = "jwt-test-secret-0123456789abcdef-jwt-test-secret" // 48 bytes
 
-func newTestVerifier(t *testing.T) *jwt.Verifier {
+func newTestJWT(t *testing.T) *jwt.JWT {
 	t.Helper()
-	v, err := jwt.NewVerifierHS256([]byte(testJWTSecret))
+	j, err := jwt.New([]byte(testJWTSecret))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return v
+	return j
 }
 
 func signToken(t *testing.T, subject string, issued, expires time.Time) string {
 	t.Helper()
-	s, err := jwt.NewSignerHS256([]byte(testJWTSecret))
+	j, err := jwt.New([]byte(testJWTSecret))
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := s.Sign(jwt.Claims{Subject: subject, IssuedAt: issued, ExpiresAt: expires})
+	token, err := j.Encode(jwt.Claims{Subject: subject, IssuedAt: issued, ExpiresAt: expires})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func signToken(t *testing.T, subject string, issued, expires time.Time) string {
 // jwtIdentityFunc is the bearer-token glue tests attach to the middleware.
 // The same shape — extract the bearer, verify, return sub — is what
 // production code wires up (see _examples/jwtauth).
-func jwtIdentityFunc(v *jwt.Verifier) IdentityFunc {
+func jwtIdentityFunc(v *jwt.JWT) IdentityFunc {
 	return func(r *http.Request) (UserID, error) {
 		h := r.Header.Get("Authorization")
 		const prefix = "Bearer "
@@ -49,7 +49,7 @@ func jwtIdentityFunc(v *jwt.Verifier) IdentityFunc {
 		if token == "" {
 			return "", errors.New("missing bearer token")
 		}
-		claims, err := v.Verify(token)
+		claims, err := v.Decode(token)
 		if err != nil {
 			return "", err
 		}
@@ -61,7 +61,7 @@ func jwtIdentityFunc(v *jwt.Verifier) IdentityFunc {
 }
 
 func TestJWTIdentityExtraction(t *testing.T) {
-	v := newTestVerifier(t)
+	v := newTestJWT(t)
 	now := time.Now()
 	identity := jwtIdentityFunc(v)
 
@@ -106,21 +106,21 @@ func TestJWTIdentityExtraction(t *testing.T) {
 }
 
 func TestJWTSignWithoutSubjectRejected(t *testing.T) {
-	s, err := jwt.NewSignerHS256([]byte(testJWTSecret), jwt.WithTTL(time.Hour))
+	j, err := jwt.New([]byte(testJWTSecret), jwt.WithTTL(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Sign must refuse to issue a token with no Subject: libauth uses sub
 	// as the user ID, so a token without it has nothing downstream can
 	// authenticate against.
-	if _, err := s.Sign(jwt.Claims{}); !errors.Is(err, jwt.ErrMissingSubject) {
+	if _, err := j.Encode(jwt.Claims{}); !errors.Is(err, jwt.ErrMissingSubject) {
 		t.Fatalf("Sign(empty): err = %v, want ErrMissingSubject", err)
 	}
 }
 
 func TestMiddlewareWithJWTIdentity(t *testing.T) {
 	e := newTestEnforcer(t)
-	mw, err := NewMiddleware(e, jwtIdentityFunc(newTestVerifier(t)))
+	mw, err := NewMiddleware(e, jwtIdentityFunc(newTestJWT(t)))
 	if err != nil {
 		t.Fatal(err)
 	}

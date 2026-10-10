@@ -34,26 +34,17 @@ func fixedClock(unix int64) Clock {
 	return func() time.Time { return time.Unix(unix, 0) }
 }
 
-func mustSigner(t *testing.T, opts ...Option) *Signer {
+func mustJWT(t *testing.T, opts ...Option) *JWT {
 	t.Helper()
-	s, err := NewSignerHS256([]byte(testSecret), opts...)
+	j, err := New([]byte(testSecret), opts...)
 	if err != nil {
-		t.Fatalf("NewSignerHS256: %v", err)
+		t.Fatalf("New: %v", err)
 	}
-	return s
-}
-
-func mustVerifier(t *testing.T, opts ...Option) *Verifier {
-	t.Helper()
-	v, err := NewVerifierHS256([]byte(testSecret), opts...)
-	if err != nil {
-		t.Fatalf("NewVerifierHS256: %v", err)
-	}
-	return v
+	return j
 }
 
 // craftToken builds a properly signed HS256 token with an arbitrary JOSE
-// header and payload, for testing paths Sign does not let you configure.
+// header and payload, for testing paths Encode does not let you configure.
 func craftToken(t *testing.T, headerJSON, payloadJSON string) string {
 	t.Helper()
 	input := b64encode([]byte(headerJSON)) + "." + b64encode([]byte(payloadJSON))
@@ -62,22 +53,32 @@ func craftToken(t *testing.T, headerJSON, payloadJSON string) string {
 	return input + "." + b64encode(mac.Sum(nil))
 }
 
+// mustEdKey generates one Ed25519 private key.
+func mustEdKey(t *testing.T) ed25519.PrivateKey {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(cryptorand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	return priv
+}
+
 func TestHS256GoldenVector(t *testing.T) {
-	token, err := mustSigner(t).Sign(Claims{
+	token, err := mustJWT(t).Encode(Claims{
 		Subject:   "alice",
 		IssuedAt:  time.Unix(1600000000, 0),
 		ExpiresAt: time.Unix(1600003600, 0),
 	})
 	if err != nil {
-		t.Fatalf("Sign: %v", err)
+		t.Fatalf("Encode: %v", err)
 	}
 	if token != goldenHS256 {
-		t.Fatalf("Sign mismatch:\n got %s\nwant %s", token, goldenHS256)
+		t.Fatalf("Encode mismatch:\n got %s\nwant %s", token, goldenHS256)
 	}
 
-	claims, err := mustVerifier(t, WithNow(fixedClock(1600003599))).Verify(goldenHS256)
+	claims, err := mustJWT(t, WithNow(fixedClock(1600003599))).Decode(goldenHS256)
 	if err != nil {
-		t.Fatalf("Verify: %v", err)
+		t.Fatalf("Decode: %v", err)
 	}
 	if claims.Subject != "alice" {
 		t.Fatalf("Subject = %q, want alice", claims.Subject)
@@ -86,8 +87,8 @@ func TestHS256GoldenVector(t *testing.T) {
 		t.Fatalf("ExpiresAt = %v, want unix 1600003600", claims.ExpiresAt)
 	}
 
-	if _, err := mustVerifier(t, WithNow(fixedClock(1600003601))).Verify(goldenHS256); !errors.Is(err, ErrTokenExpired) {
-		t.Fatalf("Verify past expiry: err = %v, want ErrTokenExpired", err)
+	if _, err := mustJWT(t, WithNow(fixedClock(1600003601))).Decode(goldenHS256); !errors.Is(err, ErrTokenExpired) {
+		t.Fatalf("Decode past expiry: err = %v, want ErrTokenExpired", err)
 	}
 }
 
@@ -128,27 +129,28 @@ func TestEdDSARFC8037Vector(t *testing.T) {
 	}
 }
 
-func TestEdDSAPublicAPIRoundTrip(t *testing.T) {
-	pub, priv, err := ed25519.GenerateKey(cryptorand.Reader)
+func TestEdDSARoundTrip(t *testing.T) {
+	priv := mustEdKey(t)
+	issuer, err := NewEdDSA(priv, WithTTL(time.Hour), WithNow(fixedClock(100)))
 	if err != nil {
-		t.Fatalf("GenerateKey: %v", err)
+		t.Fatalf("NewEdDSA: %v", err)
 	}
-	s, err := NewSignerEdDSA(priv, WithTTL(time.Hour), WithNow(fixedClock(100)))
-	if err != nil {
-		t.Fatalf("NewSignerEdDSA: %v", err)
-	}
-	v, err := NewVerifierEdDSA(pub, WithNow(fixedClock(100)))
+	// Verify-only consumer: public key alone, Encode must refuse.
+	verifier, err := NewVerifierEdDSA(priv.Public().(ed25519.PublicKey), WithNow(fixedClock(100)))
 	if err != nil {
 		t.Fatalf("NewVerifierEdDSA: %v", err)
 	}
-
-	token, err := s.Sign(Claims{Subject: "bob"})
-	if err != nil {
-		t.Fatalf("Sign: %v", err)
+	if _, err := verifier.Encode(Claims{Subject: "bob", ExpiresAt: time.Unix(2000, 0)}); !errors.Is(err, ErrInvalidKey) {
+		t.Fatalf("verify-only Encode: err = %v, want ErrInvalidKey", err)
 	}
-	claims, err := v.Verify(token)
+
+	token, err := issuer.Encode(Claims{Subject: "bob"})
 	if err != nil {
-		t.Fatalf("Verify: %v", err)
+		t.Fatalf("Encode: %v", err)
+	}
+	claims, err := verifier.Decode(token)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
 	}
 	if claims.Subject != "bob" {
 		t.Fatalf("Subject = %q, want bob", claims.Subject)
@@ -165,12 +167,12 @@ func TestEdDSAPublicAPIRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewVerifierEdDSA: %v", err)
 	}
-	if _, err := wrong.Verify(token); !errors.Is(err, ErrTokenBadSignature) {
-		t.Fatalf("verify with wrong public key: err = %v, want ErrTokenBadSignature", err)
+	if _, err := wrong.Decode(token); !errors.Is(err, ErrTokenBadSignature) {
+		t.Fatalf("decode with wrong public key: err = %v, want ErrTokenBadSignature", err)
 	}
 }
 
-func TestSignVerifyRoundTripWithExtra(t *testing.T) {
+func TestRoundTripWithExtra(t *testing.T) {
 	extra := map[string]any{
 		"org":     "acme",
 		"attempt": json.Number("3"),
@@ -189,20 +191,26 @@ func TestSignVerifyRoundTripWithExtra(t *testing.T) {
 		Extra:     extra,
 	}
 
-	edSigner, edVerifier := mustEdDSAPair(t)
+	priv := mustEdKey(t)
+	hs := mustJWT(t, WithNow(fixedClock(150)))
+	ed, err := NewEdDSA(priv, WithTTL(time.Hour))
+	if err != nil {
+		t.Fatalf("NewEdDSA: %v", err)
+	}
+	edPub := priv.Public().(ed25519.PublicKey)
 	cases := []struct {
-		name     string
-		signer   *Signer
-		verifier *Verifier
+		name   string
+		encode *JWT
+		decode *JWT
 	}{
-		{"HS256", mustSigner(t), mustVerifier(t, WithNow(fixedClock(150)))},
-		{"EdDSA", edSigner, edVerifier},
+		{"HS256", hs, hs},
+		{"EdDSA", ed, mustVerifier(t, edPub, WithNow(fixedClock(150)))},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			token, err := tc.signer.Sign(claims)
+			token, err := tc.encode.Encode(claims)
 			if err != nil {
-				t.Fatalf("Sign: %v", err)
+				t.Fatalf("Encode: %v", err)
 			}
 
 			// Multi-audience marshals as a JSON array.
@@ -211,9 +219,9 @@ func TestSignVerifyRoundTripWithExtra(t *testing.T) {
 				t.Fatalf("payload audience = %s, want JSON array", payload)
 			}
 
-			got, err := tc.verifier.Verify(token)
+			got, err := tc.decode.Decode(token)
 			if err != nil {
-				t.Fatalf("Verify: %v", err)
+				t.Fatalf("Decode: %v", err)
 			}
 			if got.Subject != claims.Subject || got.Issuer != claims.Issuer ||
 				got.ID != claims.ID || !got.ExpiresAt.Equal(claims.ExpiresAt.UTC()) ||
@@ -230,59 +238,50 @@ func TestSignVerifyRoundTripWithExtra(t *testing.T) {
 	}
 }
 
-// mustEdDSAPair returns a signer and verifier sharing one freshly generated
-// Ed25519 key pair.
-func mustEdDSAPair(t *testing.T) (*Signer, *Verifier) {
+// mustVerifier builds a verify-only EdDSA JWT.
+func mustVerifier(t *testing.T, pub ed25519.PublicKey, opts ...Option) *JWT {
 	t.Helper()
-	pub, priv, err := ed25519.GenerateKey(cryptorand.Reader)
-	if err != nil {
-		t.Fatalf("GenerateKey: %v", err)
-	}
-	s, err := NewSignerEdDSA(priv)
-	if err != nil {
-		t.Fatalf("NewSignerEdDSA: %v", err)
-	}
-	v, err := NewVerifierEdDSA(pub, WithNow(fixedClock(150)))
+	v, err := NewVerifierEdDSA(pub, opts...)
 	if err != nil {
 		t.Fatalf("NewVerifierEdDSA: %v", err)
 	}
-	return s, v
+	return v
 }
 
 func TestSingleAudienceMarshalsAsString(t *testing.T) {
-	token, err := mustSigner(t).Sign(Claims{
+	token, err := mustJWT(t).Encode(Claims{
 		Subject:   "bob",
 		Audience:  Audience{"api"},
 		IssuedAt:  time.Unix(1, 0),
 		ExpiresAt: time.Unix(2, 0),
 	})
 	if err != nil {
-		t.Fatalf("Sign: %v", err)
+		t.Fatalf("Encode: %v", err)
 	}
 	payload, _ := b64decode(strings.Split(token, ".")[1])
 	if !strings.Contains(string(payload), `"aud":"api"`) {
 		t.Fatalf("payload = %s, want single-string aud", payload)
 	}
 
-	v := mustVerifier(t, WithExpectedAudience("api"), WithNow(fixedClock(1)))
-	if _, err := v.Verify(token); err != nil {
-		t.Fatalf("Verify with expected audience: %v", err)
+	v := mustJWT(t, WithExpectedAudience("api"), WithNow(fixedClock(1)))
+	if _, err := v.Decode(token); err != nil {
+		t.Fatalf("Decode with expected audience: %v", err)
 	}
 }
 
 func TestRejectsForeignAlgorithm(t *testing.T) {
-	hsToken, err := mustSigner(t).Sign(Claims{
+	hsToken, err := mustJWT(t).Encode(Claims{
 		Subject: "bob", IssuedAt: time.Unix(1, 0), ExpiresAt: time.Unix(2, 0),
 	})
 	if err != nil {
-		t.Fatalf("Sign: %v", err)
+		t.Fatalf("Encode: %v", err)
 	}
 
 	edVerifier, err := NewVerifierEdDSA(ed25519.PublicKey(make([]byte, ed25519.PublicKeySize)))
 	if err != nil {
 		t.Fatalf("NewVerifierEdDSA: %v", err)
 	}
-	if _, err := edVerifier.Verify(hsToken); !errors.Is(err, ErrAlgMismatch) {
+	if _, err := edVerifier.Decode(hsToken); !errors.Is(err, ErrAlgMismatch) {
 		t.Fatalf("HS256 token into EdDSA verifier: err = %v, want ErrAlgMismatch", err)
 	}
 
@@ -294,7 +293,7 @@ func TestRejectsForeignAlgorithm(t *testing.T) {
 	}
 	input := b64encode(edAlg.header()) + "." + b64encode([]byte(`{"sub":"bob","exp":9999999999}`))
 	sig, _ := edAlg.sign([]byte(input))
-	if _, err := mustVerifier(t).Verify(input + "." + b64encode(sig)); !errors.Is(err, ErrAlgMismatch) {
+	if _, err := mustJWT(t).Decode(input + "." + b64encode(sig)); !errors.Is(err, ErrAlgMismatch) {
 		t.Fatalf("EdDSA token into HS256 verifier: err = %v, want ErrAlgMismatch", err)
 	}
 }
@@ -304,7 +303,7 @@ func TestRejectsNoneAlgorithm(t *testing.T) {
 	noneToken := b64encode([]byte(`{"alg":"none","typ":"JWT"}`)) + "." +
 		b64encode([]byte(`{"sub":"evil","exp":9999999999}`)) + "." +
 		b64encode([]byte("forged"))
-	if _, err := mustVerifier(t).Verify(noneToken); !errors.Is(err, ErrAlgMismatch) {
+	if _, err := mustJWT(t).Decode(noneToken); !errors.Is(err, ErrAlgMismatch) {
 		t.Fatalf("alg none: err = %v, want ErrAlgMismatch", err)
 	}
 
@@ -312,7 +311,7 @@ func TestRejectsNoneAlgorithm(t *testing.T) {
 	// malformed before the alg check even runs.
 	emptySig := b64encode([]byte(`{"alg":"none","typ":"JWT"}`)) + "." +
 		b64encode([]byte(`{"sub":"evil","exp":9999999999}`)) + "."
-	if _, err := mustVerifier(t).Verify(emptySig); !errors.Is(err, ErrTokenMalformed) {
+	if _, err := mustJWT(t).Decode(emptySig); !errors.Is(err, ErrTokenMalformed) {
 		t.Fatalf("alg none with empty signature: err = %v, want ErrTokenMalformed", err)
 	}
 }
@@ -333,38 +332,38 @@ func TestRejectsBadTypAndCrit(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			v, err := NewVerifierHS256([]byte(testSecret), clock)
+			v, err := New([]byte(testSecret), clock)
 			if err != nil {
-				t.Fatalf("NewVerifierHS256: %v", err)
+				t.Fatalf("New: %v", err)
 			}
-			_, got := v.Verify(craftToken(t, tc.header, goldenPayload))
+			_, got := v.Decode(craftToken(t, tc.header, goldenPayload))
 			if tc.want == nil {
 				if got != nil {
-					t.Fatalf("Verify: unexpected error %v", got)
+					t.Fatalf("Decode: unexpected error %v", got)
 				}
 				return
 			}
 			if !errors.Is(got, tc.want) {
-				t.Fatalf("Verify: err = %v, want %v", got, tc.want)
+				t.Fatalf("Decode: err = %v, want %v", got, tc.want)
 			}
 		})
 	}
 }
 
 func TestTamperDetection(t *testing.T) {
-	token, err := mustSigner(t).Sign(Claims{
+	token, err := mustJWT(t).Encode(Claims{
 		Subject: "bob", IssuedAt: time.Unix(1, 0), ExpiresAt: time.Unix(9999999999, 0),
 	})
 	if err != nil {
-		t.Fatalf("Sign: %v", err)
+		t.Fatalf("Encode: %v", err)
 	}
 
-	v := mustVerifier(t, WithNow(fixedClock(10)))
+	v := mustJWT(t, WithNow(fixedClock(10)))
 
-	// Re-signed payload with a forged subject keeps the original signature.
+	// Re-encoded payload with a forged subject keeps the original signature.
 	parts := strings.Split(token, ".")
 	forged := parts[0] + "." + b64encode([]byte(`{"sub":"evil","exp":9999999999}`)) + "." + parts[2]
-	if _, err := v.Verify(forged); !errors.Is(err, ErrTokenBadSignature) {
+	if _, err := v.Decode(forged); !errors.Is(err, ErrTokenBadSignature) {
 		t.Fatalf("forged payload: err = %v, want ErrTokenBadSignature", err)
 	}
 
@@ -372,16 +371,16 @@ func TestTamperDetection(t *testing.T) {
 	sig, _ := b64decode(parts[2])
 	sig[0] ^= 0x01
 	flipped := parts[0] + "." + parts[1] + "." + b64encode(sig)
-	if _, err := v.Verify(flipped); !errors.Is(err, ErrTokenBadSignature) {
+	if _, err := v.Decode(flipped); !errors.Is(err, ErrTokenBadSignature) {
 		t.Fatalf("flipped signature: err = %v, want ErrTokenBadSignature", err)
 	}
 
 	// A different secret must fail.
-	other, err := NewVerifierHS256([]byte("fedcba9876543210fedcba9876543210fedcba9876543210"))
+	other, err := New([]byte("fedcba9876543210fedcba9876543210fedcba9876543210"))
 	if err != nil {
-		t.Fatalf("NewVerifierHS256: %v", err)
+		t.Fatalf("New: %v", err)
 	}
-	if _, err := other.Verify(token); !errors.Is(err, ErrTokenBadSignature) {
+	if _, err := other.Decode(token); !errors.Is(err, ErrTokenBadSignature) {
 		t.Fatalf("wrong secret: err = %v, want ErrTokenBadSignature", err)
 	}
 }
@@ -417,30 +416,30 @@ func TestClaimValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			token, err := mustSigner(t).Sign(tc.claims())
+			token, err := mustJWT(t).Encode(tc.claims())
 			if err != nil {
-				t.Fatalf("Sign: %v", err)
+				t.Fatalf("Encode: %v", err)
 			}
-			v, err := NewVerifierHS256([]byte(testSecret), tc.verifier...)
+			v, err := New([]byte(testSecret), tc.verifier...)
 			if err != nil {
-				t.Fatalf("NewVerifierHS256: %v", err)
+				t.Fatalf("New: %v", err)
 			}
-			_, got := v.Verify(token)
+			_, got := v.Decode(token)
 			if tc.want == nil {
 				if got != nil {
-					t.Fatalf("Verify: unexpected error %v", got)
+					t.Fatalf("Decode: unexpected error %v", got)
 				}
 				return
 			}
 			if !errors.Is(got, tc.want) {
-				t.Fatalf("Verify: err = %v, want %v", got, tc.want)
+				t.Fatalf("Decode: err = %v, want %v", got, tc.want)
 			}
 		})
 	}
 }
 
 func TestMalformedTokens(t *testing.T) {
-	v := mustVerifier(t)
+	v := mustJWT(t)
 
 	cases := []string{
 		"",
@@ -455,12 +454,12 @@ func TestMalformedTokens(t *testing.T) {
 		"***." + b64encode([]byte(`{}`)) + "." + b64encode([]byte("sig")),
 	}
 	for _, token := range cases {
-		if _, err := v.Verify(token); !errors.Is(err, ErrTokenMalformed) {
+		if _, err := v.Decode(token); !errors.Is(err, ErrTokenMalformed) {
 			name := token
 			if len(name) > 40 {
 				name = name[:40] + "..."
 			}
-			t.Errorf("Verify(%q): err = %v, want ErrTokenMalformed", name, err)
+			t.Errorf("Decode(%q): err = %v, want ErrTokenMalformed", name, err)
 		}
 	}
 
@@ -476,27 +475,27 @@ func TestMalformedTokens(t *testing.T) {
 		`123`,                  // payload must be an object
 	}
 	for _, payload := range badPayloads {
-		if _, err := v.Verify(craftToken(t, `{"alg":"HS256","typ":"JWT"}`, payload)); !errors.Is(err, ErrTokenMalformed) {
-			t.Errorf("Verify(payload %q): err = %v, want ErrTokenMalformed", payload, err)
+		if _, err := v.Decode(craftToken(t, `{"alg":"HS256","typ":"JWT"}`, payload)); !errors.Is(err, ErrTokenMalformed) {
+			t.Errorf("Decode(payload %q): err = %v, want ErrTokenMalformed", payload, err)
 		}
 	}
 
 	// base64 padding is not part of the compact JWS alphabet.
 	padded := craftToken(t, `{"alg":"HS256","typ":"JWT"}`, goldenPayload)
-	if _, err := v.Verify(padded + "="); !errors.Is(err, ErrTokenMalformed) {
+	if _, err := v.Decode(padded + "="); !errors.Is(err, ErrTokenMalformed) {
 		t.Fatalf("padded token: err = %v, want ErrTokenMalformed", err)
 	}
 }
 
-func TestSignRequiresExpiration(t *testing.T) {
-	if _, err := mustSigner(t).Sign(Claims{Subject: "bob"}); !errors.Is(err, ErrMissingExpiration) {
-		t.Fatalf("Sign without exp/TTL: err = %v, want ErrMissingExpiration", err)
+func TestEncodeRequiresExpiration(t *testing.T) {
+	if _, err := mustJWT(t).Encode(Claims{Subject: "bob"}); !errors.Is(err, ErrMissingExpiration) {
+		t.Fatalf("Encode without exp/TTL: err = %v, want ErrMissingExpiration", err)
 	}
 
-	s := mustSigner(t, WithTTL(15*time.Minute), WithNow(fixedClock(1000)))
-	token, err := s.Sign(Claims{Subject: "bob"})
+	s := mustJWT(t, WithTTL(15*time.Minute), WithNow(fixedClock(1000)))
+	token, err := s.Encode(Claims{Subject: "bob"})
 	if err != nil {
-		t.Fatalf("Sign: %v", err)
+		t.Fatalf("Encode: %v", err)
 	}
 	payload, _ := b64decode(strings.Split(token, ".")[1])
 	if !strings.Contains(string(payload), `"exp":1900`) {
@@ -504,9 +503,9 @@ func TestSignRequiresExpiration(t *testing.T) {
 	}
 
 	// An explicit ExpiresAt wins over the configured TTL.
-	token, err = s.Sign(Claims{Subject: "bob", ExpiresAt: time.Unix(5000, 0)})
+	token, err = s.Encode(Claims{Subject: "bob", ExpiresAt: time.Unix(5000, 0)})
 	if err != nil {
-		t.Fatalf("Sign: %v", err)
+		t.Fatalf("Encode: %v", err)
 	}
 	payload, _ = b64decode(strings.Split(token, ".")[1])
 	if !strings.Contains(string(payload), `"exp":5000`) {
@@ -514,12 +513,12 @@ func TestSignRequiresExpiration(t *testing.T) {
 	}
 }
 
-func TestSignerDefaults(t *testing.T) {
-	s := mustSigner(t, WithIssuer("login"), WithAudience("api"), WithNow(fixedClock(1000)), WithTTL(time.Minute))
+func TestEncodeDefaults(t *testing.T) {
+	s := mustJWT(t, WithIssuer("login"), WithAudience("api"), WithNow(fixedClock(1000)), WithTTL(time.Minute))
 
-	token, err := s.Sign(Claims{Subject: "bob"})
+	token, err := s.Encode(Claims{Subject: "bob"})
 	if err != nil {
-		t.Fatalf("Sign: %v", err)
+		t.Fatalf("Encode: %v", err)
 	}
 	payload, _ := b64decode(strings.Split(token, ".")[1])
 	for _, want := range []string{`"iss":"login"`, `"aud":"api"`, `"iat":1000`, `"exp":1060`} {
@@ -529,12 +528,12 @@ func TestSignerDefaults(t *testing.T) {
 	}
 
 	// Explicit values are never overwritten.
-	token, err = s.Sign(Claims{
+	token, err = s.Encode(Claims{
 		Subject: "bob", Issuer: "other", Audience: Audience{"other"},
 		IssuedAt: time.Unix(1000, 0), ExpiresAt: time.Unix(2000, 0),
 	})
 	if err != nil {
-		t.Fatalf("Sign: %v", err)
+		t.Fatalf("Encode: %v", err)
 	}
 	payload, _ = b64decode(strings.Split(token, ".")[1])
 	if strings.Contains(string(payload), "login") || strings.Contains(string(payload), `"api"`) {
@@ -542,49 +541,49 @@ func TestSignerDefaults(t *testing.T) {
 	}
 }
 
-func TestSignerRejectsReservedExtraClaims(t *testing.T) {
-	_, err := mustSigner(t).Sign(Claims{
+func TestEncodeRejectsReservedExtraClaims(t *testing.T) {
+	_, err := mustJWT(t).Encode(Claims{
 		Subject:   "bob",
 		IssuedAt:  time.Unix(1, 0),
 		ExpiresAt: time.Unix(2, 0),
 		Extra:     map[string]any{"exp": 1},
 	})
 	if !errors.Is(err, ErrReservedClaim) {
-		t.Fatalf("Sign: err = %v, want ErrReservedClaim", err)
+		t.Fatalf("Encode: err = %v, want ErrReservedClaim", err)
 	}
 }
 
-func TestSigningIsDeterministic(t *testing.T) {
-	s := mustSigner(t, WithNow(fixedClock(1000)), WithTTL(time.Minute))
+func TestEncodingIsDeterministic(t *testing.T) {
+	s := mustJWT(t, WithNow(fixedClock(1000)), WithTTL(time.Minute))
 	claims := Claims{Subject: "bob"}
-	a, err := s.Sign(claims)
+	a, err := s.Encode(claims)
 	if err != nil {
-		t.Fatalf("Sign: %v", err)
+		t.Fatalf("Encode: %v", err)
 	}
-	b, err := s.Sign(claims)
+	b, err := s.Encode(claims)
 	if err != nil {
-		t.Fatalf("Sign: %v", err)
+		t.Fatalf("Encode: %v", err)
 	}
 	if a != b {
-		t.Fatalf("same claims must sign to the same token:\n%s\n%s", a, b)
+		t.Fatalf("same claims must encode to the same token:\n%s\n%s", a, b)
 	}
 }
 
 func TestInvalidKeys(t *testing.T) {
-	if _, err := NewSignerHS256([]byte("short")); !errors.Is(err, ErrInvalidKey) {
-		t.Fatalf("NewSignerHS256 short key: err = %v, want ErrInvalidKey", err)
+	if _, err := New([]byte("short")); !errors.Is(err, ErrInvalidKey) {
+		t.Fatalf("New short key: err = %v, want ErrInvalidKey", err)
 	}
-	if _, err := NewVerifierHS256(make([]byte, 31)); !errors.Is(err, ErrInvalidKey) {
-		t.Fatalf("NewVerifierHS256 31-byte key: err = %v, want ErrInvalidKey", err)
+	if _, err := New(make([]byte, 31)); !errors.Is(err, ErrInvalidKey) {
+		t.Fatalf("New 31-byte key: err = %v, want ErrInvalidKey", err)
 	}
-	if _, err := NewSignerHS256(make([]byte, 32)); err != nil {
-		t.Fatalf("NewSignerHS256 32-byte key: %v", err)
+	if _, err := New(make([]byte, 32)); err != nil {
+		t.Fatalf("New 32-byte key: %v", err)
 	}
-	if _, err := NewSignerEdDSA(make([]byte, ed25519.PublicKeySize)); !errors.Is(err, ErrInvalidKey) {
-		t.Fatalf("NewSignerEdDSA with public-size key: err = %v, want ErrInvalidKey", err)
+	if _, err := NewEdDSA(make([]byte, ed25519.PublicKeySize)); !errors.Is(err, ErrInvalidKey) {
+		t.Fatalf("NewEdDSA with public-size key: err = %v, want ErrInvalidKey", err)
 	}
-	if _, err := NewSignerEdDSA(nil); !errors.Is(err, ErrInvalidKey) {
-		t.Fatalf("NewSignerEdDSA nil key: err = %v, want ErrInvalidKey", err)
+	if _, err := NewEdDSA(nil); !errors.Is(err, ErrInvalidKey) {
+		t.Fatalf("NewEdDSA nil key: err = %v, want ErrInvalidKey", err)
 	}
 	if _, err := NewVerifierEdDSA(make([]byte, ed25519.PrivateKeySize)); !errors.Is(err, ErrInvalidKey) {
 		t.Fatalf("NewVerifierEdDSA with private-size key: err = %v, want ErrInvalidKey", err)

@@ -1,17 +1,16 @@
-// Package jwt implements a minimal, dependency-free JWT signer and verifier
+// Package jwt implements a minimal, dependency-free JWT encoder and decoder
 // (RFC 7519) for carrying libauth identities.
 //
 // Security posture:
-//   - Algorithm pinned at construction: a Verifier only accepts tokens
-//     signed with the exact algorithm it was built for, so "none" and
+//   - Algorithm pinned at construction: Decode only accepts tokens signed
+//     with the exact algorithm the JWT was built for, so "none" and
 //     cross-algorithm confusion are structurally impossible.
 //   - HS256 (HMAC-SHA-256) and EdDSA (Ed25519), both stdlib-only.
 //   - Signature verified before any claim is parsed.
-//   - Sign refuses claims without exp unless a default TTL is configured.
-//   - Sign refuses claims without sub.
+//   - Encode refuses claims without exp unless a default TTL is configured.
+//   - Encode refuses claims without sub.
 //
-// Typical use — bind a symmetric JWT once and use Encode / Decode on both
-// sides of the wire:
+// One type covers every deployment shape:
 //
 //	auth, err := jwt.New(secret,
 //	    jwt.WithTTL(15*time.Minute),
@@ -21,10 +20,9 @@
 //	token, err := auth.Encode(jwt.Claims{Subject: "bob"})
 //	claims, err := auth.Decode(token)
 //
-// For asymmetric deployments where only the issuer holds the private key,
-// use NewEdDSA. Splitting a Signer and a Verifier is still possible via
-// NewSignerEdDSA / NewVerifierEdDSA when the two sides must live in
-// different processes.
+// New binds HS256 under a shared secret. NewEdDSA signs with an Ed25519
+// private key; API servers that only verify call NewVerifierEdDSA with the
+// public half — Encode on that instance fails with ErrInvalidKey.
 package jwt
 
 import (
@@ -41,23 +39,25 @@ const (
 	AlgEdDSA = "EdDSA" // Ed25519 (RFC 8037)
 )
 
-// Clock returns the current time. Inject one via WithNow to make signing
-// and verification deterministic.
+// Clock returns the current time. Inject one via WithNow to make encoding
+// and decoding deterministic.
 type Clock func() time.Time
 
-// Option customises a signer or a verifier. Options that do not apply to
-// the constructor they are passed to are ignored.
+// Option customises encoding or decoding. Options that do not apply to the
+// side they were passed to are ignored: WithTTL / WithIssuer / WithAudience
+// affect Encode, WithExpectedIssuer / WithExpectedAudience / WithLeeway
+// affect Decode, WithNow affects both.
 type Option func(*settings)
 
 type settings struct {
-	// signer: default ExpiresAt applied when signed claims carry none.
+	// Encode: default ExpiresAt applied when signed claims carry none.
 	ttl time.Duration
-	// signer: default Issuer / Audience applied when claims leave them empty.
+	// Encode: default Issuer / Audience applied when claims leave them empty.
 	issuer   string
 	audience Audience
-	// verifier: tolerated clock skew around exp/nbf/iat checks.
+	// Decode: tolerated clock skew around exp/nbf/iat checks.
 	leeway time.Duration
-	// verifier: pinned iss / aud when non-empty.
+	// Decode: pinned iss / aud when non-empty.
 	expectIssuer   string
 	expectAudience string
 	// both: injectable clock.
@@ -77,24 +77,26 @@ func newSettings(opts []Option) *settings {
 	return s
 }
 
-// WithTTL sets the signer's default validity period (verifiers ignore it).
+// WithTTL sets the default validity period Encode applies when claims carry
+// no ExpiresAt (decoding ignores it).
 func WithTTL(d time.Duration) Option { return func(s *settings) { s.ttl = d } }
 
-// WithIssuer sets the signer's default Issuer claim (verifiers ignore it).
+// WithIssuer sets the default Issuer claim Encode applies when claims carry
+// none (decoding ignores it).
 func WithIssuer(iss string) Option { return func(s *settings) { s.issuer = iss } }
 
-// WithAudience sets the signer's default Audience claim (verifiers ignore it).
+// WithAudience sets the default Audience claim Encode applies when claims
+// carry none (decoding ignores it).
 func WithAudience(aud ...string) Option { return func(s *settings) { s.audience = aud } }
 
-// WithLeeway sets the verifier's tolerated clock skew for exp, nbf and
-// iat checks. Default is zero (signers ignore it).
+// WithLeeway sets the tolerated clock skew for the exp, nbf and iat checks.
+// Default is zero (encoding ignores it).
 func WithLeeway(d time.Duration) Option { return func(s *settings) { s.leeway = d } }
 
-// WithExpectedIssuer pins the verifier to tokens issued by iss.
+// WithExpectedIssuer pins decoding to tokens issued by iss.
 func WithExpectedIssuer(iss string) Option { return func(s *settings) { s.expectIssuer = iss } }
 
-// WithExpectedAudience pins the verifier to tokens whose aud claim
-// contains aud.
+// WithExpectedAudience pins decoding to tokens whose aud claim contains aud.
 func WithExpectedAudience(aud string) Option {
 	return func(s *settings) { s.expectAudience = aud }
 }
@@ -110,90 +112,71 @@ func WithNow(now Clock) Option {
 	}
 }
 
-// Signer issues compact-serialization JWTs for one pinned algorithm.
-//
-// Deprecated: use JWT (jwt.New / jwt.NewEdDSA) for new code.
-type Signer struct {
+// JWT encodes and decodes compact-serialization tokens for one pinned
+// algorithm. It is safe for concurrent use.
+type JWT struct {
 	alg algorithm
 	set *settings
 }
 
-// Verifier validates compact-serialization JWTs for one pinned algorithm.
-//
-// Deprecated: use JWT (jwt.New / jwt.NewEdDSA) for new code.
-type Verifier struct {
-	alg algorithm
-	set *settings
-}
-
-// NewSignerHS256 returns an HS256 signer. The secret must be at least 32
-// bytes (RFC 7518 §3.2).
-func NewSignerHS256(key []byte, opts ...Option) (*Signer, error) {
+// New returns an HS256 JWT keyed with a shared secret. The secret must be
+// at least 32 bytes (RFC 7518 §3.2); both Encode and Decode work on the
+// returned instance.
+func New(key []byte, opts ...Option) (*JWT, error) {
 	alg, err := newHMACAlg(AlgHS256, key)
 	if err != nil {
 		return nil, err
 	}
-	return &Signer{alg: alg, set: newSettings(opts)}, nil
+	return &JWT{alg: alg, set: newSettings(opts)}, nil
 }
 
-// NewSignerEdDSA returns an EdDSA signer; generate one with
-// ed25519.GenerateKey. The matching verifier takes the public half only.
-func NewSignerEdDSA(key ed25519.PrivateKey, opts ...Option) (*Signer, error) {
-	alg, err := newEdDSASignAlg(key)
+// NewEdDSA returns an EdDSA JWT that signs with priv (generate one with
+// ed25519.GenerateKey; the public half is derived from it).
+func NewEdDSA(priv ed25519.PrivateKey, opts ...Option) (*JWT, error) {
+	alg, err := newEdDSASignAlg(priv)
 	if err != nil {
 		return nil, err
 	}
-	return &Signer{alg: alg, set: newSettings(opts)}, nil
+	return &JWT{alg: alg, set: newSettings(opts)}, nil
 }
 
-// NewVerifierHS256 returns an HS256 verifier keyed with the shared secret
-// the issuer used (at least 32 bytes).
-func NewVerifierHS256(key []byte, opts ...Option) (*Verifier, error) {
-	alg, err := newHMACAlg(AlgHS256, key)
+// NewVerifierEdDSA returns a verify-only EdDSA JWT keyed with the issuer's
+// public key; it cannot sign — Encode fails with ErrInvalidKey.
+func NewVerifierEdDSA(pub ed25519.PublicKey, opts ...Option) (*JWT, error) {
+	alg, err := newEdDSAVerifyAlg(pub)
 	if err != nil {
 		return nil, err
 	}
-	return &Verifier{alg: alg, set: newSettings(opts)}, nil
+	return &JWT{alg: alg, set: newSettings(opts)}, nil
 }
 
-// NewVerifierEdDSA returns an EdDSA verifier keyed with the issuer's
-// public key. It cannot sign tokens.
-func NewVerifierEdDSA(key ed25519.PublicKey, opts ...Option) (*Verifier, error) {
-	alg, err := newEdDSAVerifyAlg(key)
-	if err != nil {
-		return nil, err
-	}
-	return &Verifier{alg: alg, set: newSettings(opts)}, nil
-}
+func (j *JWT) Algorithm() string { return j.alg.name() }
 
-func (s *Signer) Algorithm() string { return s.alg.name() }
-func (v *Verifier) Algorithm() string { return v.alg.name() }
-
-// Sign marshals the claims, signs them and returns the compact JWT.
+// Encode issues a compact-serialization token for the claims.
 //
 // Defaults applied before signing: IssuedAt becomes now when zero;
-// ExpiresAt becomes IssuedAt plus the configured TTL when zero (and Sign
-// fails with ErrMissingExpiration if no TTL is configured either); Issuer
-// and Audience fall back to the configured values when empty.
-func (s *Signer) Sign(claims Claims) (string, error) {
+// ExpiresAt becomes IssuedAt plus the configured TTL when zero (and
+// Encode fails with ErrMissingExpiration if no TTL is configured either);
+// Issuer and Audience fall back to the configured values when empty.
+func (j *JWT) Encode(claims Claims) (string, error) {
 	if claims.Subject == "" {
 		return "", ErrMissingSubject
 	}
-	now := s.set.now()
+	now := j.set.now()
 	if claims.IssuedAt.IsZero() {
 		claims.IssuedAt = now
 	}
 	if claims.ExpiresAt.IsZero() {
-		if s.set.ttl <= 0 {
+		if j.set.ttl <= 0 {
 			return "", ErrMissingExpiration
 		}
-		claims.ExpiresAt = claims.IssuedAt.Add(s.set.ttl)
+		claims.ExpiresAt = claims.IssuedAt.Add(j.set.ttl)
 	}
 	if claims.Issuer == "" {
-		claims.Issuer = s.set.issuer
+		claims.Issuer = j.set.issuer
 	}
 	if len(claims.Audience) == 0 {
-		claims.Audience = s.set.audience
+		claims.Audience = j.set.audience
 	}
 
 	payload, err := json.Marshal(claims)
@@ -201,21 +184,21 @@ func (s *Signer) Sign(claims Claims) (string, error) {
 		return "", fmt.Errorf("libauth: encode claims: %w", err)
 	}
 
-	input := b64encode(s.alg.header()) + "." + b64encode(payload)
-	signature, err := s.alg.sign([]byte(input))
+	input := b64encode(j.alg.header()) + "." + b64encode(payload)
+	signature, err := j.alg.sign([]byte(input))
 	if err != nil {
 		return "", err
 	}
 	return input + "." + b64encode(signature), nil
 }
 
-// Verify checks the token's structure and signature, then validates the
+// Decode checks the token's structure and signature, then validates the
 // registered time claims (exp, nbf, iat, each with the configured leeway)
 // and the pinned iss/aud when configured.
 //
 // Order matters: the signature is checked before the payload is parsed,
 // so untrusted input never reaches claim handling unauthenticated.
-func (v *Verifier) Verify(token string) (*Claims, error) {
+func (j *JWT) Decode(token string) (*Claims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
 		return nil, ErrTokenMalformed
@@ -233,8 +216,8 @@ func (v *Verifier) Verify(token string) (*Claims, error) {
 	if err := json.Unmarshal(header, &jose); err != nil {
 		return nil, ErrTokenMalformed
 	}
-	if jose.Alg != v.alg.name() {
-		return nil, fmt.Errorf("%w: got %q, want %q", ErrAlgMismatch, jose.Alg, v.alg.name())
+	if jose.Alg != j.alg.name() {
+		return nil, fmt.Errorf("%w: got %q, want %q", ErrAlgMismatch, jose.Alg, j.alg.name())
 	}
 	if jose.Typ != "" && !typIsJWT(jose.Typ) {
 		return nil, fmt.Errorf("%w: %q", ErrUnexpectedTyp, jose.Typ)
@@ -247,7 +230,7 @@ func (v *Verifier) Verify(token string) (*Claims, error) {
 	if err != nil {
 		return nil, ErrTokenMalformed
 	}
-	if err := v.alg.verify([]byte(parts[0]+"."+parts[1]), signature); err != nil {
+	if err := j.alg.verify([]byte(parts[0]+"."+parts[1]), signature); err != nil {
 		return nil, err
 	}
 
@@ -259,28 +242,28 @@ func (v *Verifier) Verify(token string) (*Claims, error) {
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrTokenMalformed, err)
 	}
-	if err := v.validate(&claims); err != nil {
+	if err := j.validate(&claims); err != nil {
 		return nil, err
 	}
 	return &claims, nil
 }
 
-func (v *Verifier) validate(c *Claims) error {
-	now := v.set.now()
-	if !c.ExpiresAt.IsZero() && now.After(c.ExpiresAt.Add(v.set.leeway)) {
+func (j *JWT) validate(c *Claims) error {
+	now := j.set.now()
+	if !c.ExpiresAt.IsZero() && now.After(c.ExpiresAt.Add(j.set.leeway)) {
 		return fmt.Errorf("%w: expired at %s", ErrTokenExpired, c.ExpiresAt.UTC().Format(time.RFC3339))
 	}
-	if !c.NotBefore.IsZero() && now.Before(c.NotBefore.Add(-v.set.leeway)) {
+	if !c.NotBefore.IsZero() && now.Before(c.NotBefore.Add(-j.set.leeway)) {
 		return fmt.Errorf("%w: not before %s", ErrTokenNotYetValid, c.NotBefore.UTC().Format(time.RFC3339))
 	}
-	if !c.IssuedAt.IsZero() && now.Before(c.IssuedAt.Add(-v.set.leeway)) {
+	if !c.IssuedAt.IsZero() && now.Before(c.IssuedAt.Add(-j.set.leeway)) {
 		return fmt.Errorf("%w: issued at %s", ErrTokenIssuedInFuture, c.IssuedAt.UTC().Format(time.RFC3339))
 	}
-	if v.set.expectIssuer != "" && c.Issuer != v.set.expectIssuer {
-		return fmt.Errorf("%w: got %q, want %q", ErrIssuerMismatch, c.Issuer, v.set.expectIssuer)
+	if j.set.expectIssuer != "" && c.Issuer != j.set.expectIssuer {
+		return fmt.Errorf("%w: got %q, want %q", ErrIssuerMismatch, c.Issuer, j.set.expectIssuer)
 	}
-	if v.set.expectAudience != "" && !c.Audience.Contains(v.set.expectAudience) {
-		return fmt.Errorf("%w: token carries %v, want %q", ErrAudienceMismatch, []string(c.Audience), v.set.expectAudience)
+	if j.set.expectAudience != "" && !c.Audience.Contains(j.set.expectAudience) {
+		return fmt.Errorf("%w: token carries %v, want %q", ErrAudienceMismatch, []string(c.Audience), j.set.expectAudience)
 	}
 	return nil
 }

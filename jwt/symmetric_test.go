@@ -90,11 +90,11 @@ func TestJWTSymmetricHS256MissingSubject(t *testing.T) {
 // TestJWTSymmetricEdDSA confirms the asymmetric variant binds a private
 // signer and a public verifier around the same EdDSA algorithm.
 func TestJWTSymmetricEdDSA(t *testing.T) {
-	pub, priv, err := ed25519.GenerateKey(cryptorand.Reader)
+	_, priv, err := ed25519.GenerateKey(cryptorand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth, err := NewEdDSA(priv, pub, WithTTL(time.Hour), WithNow(fixedClockSym(100)))
+	auth, err := NewEdDSA(priv, WithTTL(time.Hour), WithNow(fixedClockSym(100)))
 	if err != nil {
 		t.Fatalf("NewEdDSA: %v", err)
 	}
@@ -115,14 +115,10 @@ func TestJWTSymmetricEdDSA(t *testing.T) {
 }
 
 // TestJWTSymmetricEdDSANilPrivate ensures we never accept an EdDSA binding
-// without a private key — Decode-only flows still need a verifier to be
-// constructed through NewVerifierEdDSA directly.
+// without a private key — Decode-only flows construct through
+// NewVerifierEdDSA directly.
 func TestJWTSymmetricEdDSANilPrivate(t *testing.T) {
-	pub, _, err := ed25519.GenerateKey(cryptorand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := NewEdDSA(nil, pub); !errors.Is(err, ErrInvalidKey) {
+	if _, err := NewEdDSA(nil); !errors.Is(err, ErrInvalidKey) {
 		t.Fatalf("NewEdDSA(nil): err = %v, want ErrInvalidKey", err)
 	}
 }

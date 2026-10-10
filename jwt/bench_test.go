@@ -23,69 +23,69 @@ var benchClaims = Claims{
 	ExpiresAt: time.Unix(1_700_000_900, 0),
 }
 
-// benchHS256 builds a Signer / Verifier pair over the package's
+// benchHS256 builds an encode / decode pair over the package's
 // testSecret, primed for -bench.
-func benchHS256() (*Signer, *Verifier) {
-	s, _ := NewSignerHS256([]byte(testSecret), WithNow(fixedClock(1_700_000_000)))
-	v, _ := NewVerifierHS256([]byte(testSecret), WithNow(fixedClock(1_700_000_000)))
-	return s, v
+func benchHS256() (*JWT, *JWT) {
+	enc, _ := New([]byte(testSecret), WithNow(fixedClock(1_700_000_000)))
+	dec, _ := New([]byte(testSecret), WithNow(fixedClock(1_700_000_000)))
+	return enc, dec
 }
 
-// benchEdDSA builds an EdDSA pair over a freshly generated key.
-func benchEdDSA() (*Signer, *Verifier) {
+// benchEdDSA builds an EdDSA encoder and a verify-only decoder over a freshly generated key.
+func benchEdDSA() (*JWT, *JWT) {
 	pub, priv, _ := ed25519.GenerateKey(cryptorand.Reader)
-	s, _ := NewSignerEdDSA(priv, WithNow(fixedClock(1_700_000_000)))
-	v, _ := NewVerifierEdDSA(pub, WithNow(fixedClock(1_700_000_000)))
-	return s, v
+	enc, _ := NewEdDSA(priv, WithNow(fixedClock(1_700_000_000)))
+	dec, _ := NewVerifierEdDSA(pub, WithNow(fixedClock(1_700_000_000)))
+	return enc, dec
 }
 
-func BenchmarkSignHS256(b *testing.B) {
-	s, _ := benchHS256()
+func BenchmarkEncodeHS256(b *testing.B) {
+	enc, _ := benchHS256()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := s.Sign(benchClaims); err != nil {
+		if _, err := enc.Encode(benchClaims); err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
-func BenchmarkVerifyHS256(b *testing.B) {
-	s, v := benchHS256()
-	token, err := s.Sign(benchClaims)
+func BenchmarkDecodeHS256(b *testing.B) {
+	enc, dec := benchHS256()
+	token, err := enc.Encode(benchClaims)
 	if err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := v.Verify(token); err != nil {
+		if _, err := dec.Decode(token); err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
-func BenchmarkSignEdDSA(b *testing.B) {
-	s, _ := benchEdDSA()
+func BenchmarkEncodeEdDSA(b *testing.B) {
+	enc, _ := benchEdDSA()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := s.Sign(benchClaims); err != nil {
+		if _, err := enc.Encode(benchClaims); err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
-func BenchmarkVerifyEdDSA(b *testing.B) {
-	s, v := benchEdDSA()
-	token, err := s.Sign(benchClaims)
+func BenchmarkDecodeEdDSA(b *testing.B) {
+	enc, dec := benchEdDSA()
+	token, err := enc.Encode(benchClaims)
 	if err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := v.Verify(token); err != nil {
+		if _, err := dec.Decode(token); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -94,7 +94,7 @@ func BenchmarkVerifyEdDSA(b *testing.B) {
 // BenchmarkLargePayloadHS256 isolates HMAC cost from JSON cost by issuing
 // a token whose claims.Extra carries ~1 KiB of payload data.
 func BenchmarkLargePayloadHS256(b *testing.B) {
-	s, v := benchHS256()
+	enc, dec := benchHS256()
 	extra := make(map[string]any, 256)
 	filler := strings.Repeat("x", 1024)
 	for i := 0; i < 256; i++ {
@@ -102,14 +102,14 @@ func BenchmarkLargePayloadHS256(b *testing.B) {
 	}
 	claims := benchClaims
 	claims.Extra = extra
-	token, err := s.Sign(claims)
+	token, err := enc.Encode(claims)
 	if err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := v.Verify(token); err != nil {
+		if _, err := dec.Decode(token); err != nil {
 			b.Fatal(err)
 		}
 	}
