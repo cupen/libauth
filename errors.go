@@ -2,12 +2,15 @@ package libauth
 
 import (
 	"github.com/cupen/libauth/authz"
-	"github.com/cupen/libauth/jwt"
 	"github.com/cupen/libauth/middleware"
 	"github.com/cupen/libauth/model"
 	"github.com/cupen/libauth/store"
 )
 
+// Sentinel errors of the RBAC core, re-exported so callers can branch with
+// errors.Is after importing only the root package. Token errors stay in
+// their own jwt / branca packages — matching them means using those
+// packages anyway.
 var (
 	ErrUserNotFound = store.ErrUserNotFound
 	ErrRoleNotFound = store.ErrRoleNotFound
@@ -21,22 +24,8 @@ var (
 	ErrCyclicInheritance = authz.ErrCyclicInheritance
 	ErrInheritanceDepth  = authz.ErrInheritanceDepth
 
-	ErrInvalidIdentityFunc = middleware.ErrInvalidIdentityFunc
-
-	ErrTokenMalformed      = jwt.ErrTokenMalformed
-	ErrTokenBadSignature   = jwt.ErrTokenBadSignature
-	ErrTokenExpired        = jwt.ErrTokenExpired
-	ErrTokenNotYetValid    = jwt.ErrTokenNotYetValid
-	ErrTokenIssuedInFuture = jwt.ErrTokenIssuedInFuture
-	ErrAlgMismatch         = jwt.ErrAlgMismatch
-	ErrUnexpectedTyp       = jwt.ErrUnexpectedTyp
-	ErrUnsupportedCrit     = jwt.ErrUnsupportedCrit
-	ErrMissingExpiration   = jwt.ErrMissingExpiration
-	ErrMissingSubject      = jwt.ErrMissingSubject
-	ErrReservedClaim       = jwt.ErrReservedClaim
-	ErrIssuerMismatch      = jwt.ErrIssuerMismatch
-	ErrAudienceMismatch    = jwt.ErrAudienceMismatch
-	ErrInvalidKey          = jwt.ErrInvalidKey
+	ErrNilAuthorizer   = middleware.ErrNilAuthorizer
+	ErrNilIdentityFunc = middleware.ErrNilIdentityFunc
 )
 
 type PermissionDeniedError = model.PermissionDeniedError

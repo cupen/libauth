@@ -170,7 +170,7 @@ func seed() *libauth.Enforcer {
 	for _, r := range []struct {
 		name        string
 		permissions []libauth.Permission
-		parent      libauth.RoleName
+		parent      libauth.RoleID
 	}{
 		{"admin", []libauth.Permission{{Resource: "*"}}, ""},
 		{"editor", []libauth.Permission{
@@ -189,7 +189,7 @@ func seed() *libauth.Enforcer {
 		}
 	}
 
-	for id, roles := range map[string][]libauth.RoleName{
+	for id, roles := range map[string][]libauth.RoleID{
 		"alice": {"admin"},
 		"bob":   {"editor", "viewer"},
 		"carol": {"viewer"},

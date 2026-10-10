@@ -23,7 +23,7 @@ import (
 // Core RBAC data types, re-exported from the model subpackage.
 type (
 	UserID     = model.UserID
-	RoleName   = model.RoleName
+	RoleID     = model.RoleID
 	Permission = model.Permission
 	User       = model.User
 	Role       = model.Role

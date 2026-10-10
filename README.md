@@ -52,9 +52,11 @@ m.Check("bob", libauth.Permission{"article", "publish"})  // nil
 - 角色分配：`AssignRole` / `RevokeRole` / `RolesFor`（含继承链）
 - 角色：`CreateRole` / `UpdateRole` / `DeleteRole` / `GetRole` / `ListRoles` / `SetParent`
 - 权限：`GrantPermission` / `RevokePermission`（角色）；`GrantDirectPermission` / `RevokeDirectPermission`（用户直授）
-- 检查：`Check`（返回错误）、`HasPermission`、`HasAllPermissions`、`HasAnyPermission`、`HasRole` / `HasAnyRole` / `HasAllRoles`
+- 检查：`Check`（返回错误）、`HasPermission`、`HasRole`（直接持有，不含继承）；组合语义自己循环即可
 - 汇总：`PermissionsFor`（用户的有效权限全集，去重排序）
 - 构造：`libauth.New()`，可选 `libauth.WithStore(s)`、`libauth.WithMaxDepth(n)`
+
+并发契约：读（`Check` / `Has*` / `PermissionsFor` 等）可任意并发；写（`AssignRole` 等变更）之间串行化、不丢更新；变更返回后，后续读立即看到新状态。`Enforcer` 必须是其 `Store` 的唯一写入方。
 
 `Store` 接口（见 [store/store.go](store/store.go)）定义了持久化契约，内置 `MemoryStore` 是参考实现；接入 MySQL/Postgres 时实现该接口并通过 `libauth.New(libauth.WithStore(myStore))` 注入。
 
@@ -70,33 +72,36 @@ mux.Handle("POST /publish",  mw.RequireAll(libauth.Permission{"article", "edit"}
 mux.Handle("GET  /audit",    mw.RequireRole("admin")(audit))
 ```
 
-- 身份失败或用户不存在 → `401`；已认证但缺权限 → `403`（`*PermissionDeniedError`，可用 `errors.Is(err, libauth.ErrPermissionDenied)` 匹配）。
+- 身份失败或用户不存在 → `401`；已认证但缺权限 → `403`（`*PermissionDeniedError`，可用 `errors.Is(err, libauth.ErrPermissionDenied)` 匹配）。拒绝载荷如实描述缺口：单权限填 `Required`，`RequireAny` 填 `RequiredAny`，`RequireRole` 填 `RequiredRole`。
 - 通过校验后 `libauth.UserFromContext(r.Context())` 拿到 `*User`。
-- 自定义响应写 `mw.OnError`；身份来源是个 `IdentityFunc(r *http.Request) (UserID, error)`,默认是 `HeaderIdentity("")` 读 `X-User-ID`。要接 JWT / Branca,自己写几行:取 `Authorization` 头、调 `Verify` 或 `Decode`、返回 `sub`。完整样板见 [_examples/jwtauth](_examples/jwtauth/main.go)。`NewMiddleware` 也接受任何 `Authorizer` 实现,`*Enforcer` 开箱即用。
+- 身份来源是个 `IdentityFunc(r *http.Request) (UserID, error)`,显式传入（`nil` 直接报错,不会静默退到明文头）；`HeaderIdentity("")` 读 `X-User-ID`,仅供演示与内网。要接 JWT / Branca,自己写几行:取 `Authorization` 头、调 `Decode`、返回 `sub`。完整样板见 [_examples/jwtauth](_examples/jwtauth/main.go)。
+- 自定义错误响应用选项：`libauth.NewMiddleware(m, identity, libauth.WithOnError(handler))`。`NewMiddleware` 也接受任何 `Authorizer` 实现,`*Enforcer` 开箱即用。
 
 ## JWT 令牌
 
-`jwt` 子包（[RFC 7519](https://www.rfc-editor.org/rfc/rfc7519)）签发/校验 JWT——HS256 与 Ed25519 都来自标准库,零三方依赖。安全取舍:算法钉死在构造时（`alg: "none"` 与跨算法混淆在结构上不可能）、`Sign` 强制要求 `exp`（或 `WithTTL`）否则报错、签名先于 claims 解析、`exp`/`nbf`/`iat` 全部校验（`WithLeeway` 容忍时钟漂移）、HS256 密钥至少 32 字节。
+`jwt` 子包（[RFC 7519](https://www.rfc-editor.org/rfc/rfc7519)）签发/校验 JWT——HS256 与 Ed25519 都来自标准库,零三方依赖。安全取舍:算法钉死在构造时（`alg: "none"` 与跨算法混淆在结构上不可能）、`Encode` 强制要求 `exp`（或 `WithTTL`）否则报错、签名先于 claims 解析、`exp`/`nbf`/`iat` 全部校验（`WithLeeway` 容忍时钟漂移）、HS256 密钥至少 32 字节。
+
+一个 `JWT` 类型覆盖全部部署形态,动词只有 `Encode` / `Decode`:
 
 ```go
-signer, _ := jwt.NewSignerHS256   (secret, jwt.WithTTL(15*time.Minute), jwt.WithIssuer("login"))
-verifier, _ := jwt.NewVerifierHS256(secret, jwt.WithExpectedIssuer("login"))
+auth, _ := jwt.New(secret, jwt.WithTTL(15*time.Minute), jwt.WithIssuer("login"),
+    jwt.WithExpectedIssuer("login"))
 
-token, _ := signer.Sign(jwt.Claims{Subject: "bob"})
-claims, _ := verifier.Verify(token) // claims.Subject / ExpiresAt / Extra
+token, _  := auth.Encode(jwt.Claims{Subject: "bob"})
+claims, _ := auth.Decode(token) // claims.Subject / ExpiresAt / Extra
 
 // 接入中间件 —— token 的 sub 即用户 ID,几行 IdentityFunc 就行
 identity := func(r *http.Request) (libauth.UserID, error) {
     token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-    claims, err := verifier.Verify(token)
+    claims, err := auth.Decode(token)
     if err != nil { return "", err }
     return libauth.UserID(claims.Subject), nil
 }
 mw, _ := libauth.NewMiddleware(m, identity)
 
-// 多服务验签、签发方独占密钥的场景选 EdDSA
-signer,   _ := jwt.NewSignerEdDSA  (priv)
-verifier, _ := jwt.NewVerifierEdDSA(pub)
+// 多服务验签、签发方独占密钥:签发侧持私钥,验签侧只要公钥
+issuer,   _ := jwt.NewEdDSA(priv)             // Encode + Decode
+verifier, _ := jwt.NewVerifierEdDSA(pub)       // 仅 Decode;Encode 报 ErrInvalidKey
 ```
 
 ## Branca 令牌
@@ -138,21 +143,21 @@ mw, _ := libauth.NewMiddleware(m, identity)
 
 ## 性能
 
-权限检查是热路径,`authz.Enforcer` 对每个用户维护已授予权限集合的内存缓存(`grantedSet`,扁平化 `{Resource: {Action}}` 索引),命中只走几次 map 查找;写路径由 `Enforcer` 集中失效,读侧无锁。
+权限检查是热路径,`authz.Enforcer` 对每个用户维护已授予权限集合的内存缓存(`grantedSet`,扁平化 `{Resource: {Action}}` 索引),命中只走几次 map 查找、零分配;写路径由 `Enforcer` 集中失效(含继承子树),读侧无锁。命中路径有一个 `TestCheckWarmPathZeroAllocs` 回归测试钉住"零分配"契约。
 
 `make bench` 跑 `authz` 包的 `Check` 微基准,规模按"角色数 × 每角色权限数"标注,缓存命中与冷启动两路数字:
 
 | 规模 | 命中 | 冷启 |
 |---|---|---|
-| 单用户 + `*`(参照点) | **22 ns/op**,0 allocs | 1.0 µs/op,15 allocs |
-| 100 角色 × 10 权限(1 000 grants) | 51 ns/op,0 allocs | 132 µs/op,917 allocs |
-| 100 角色 × 100 权限(10 000 grants) | 54 ns/op,0 allocs | 1.08 ms/op,1517 allocs |
-| 1000 角色 × 10 权限(10 000 grants) | 62 ns/op,0 allocs | 1.83 ms/op,9030 allocs |
-| 1000 角色 × 100 权限(100 000 grants) | 61 ns/op,0 allocs | 11.4 ms/op,15 030 allocs |
+| 单用户 + `*`(参照点) | **13 ns/op**,0 allocs | 0.41 µs/op,15 allocs |
+| 100 角色 × 10 权限(1 000 grants) | 32 ns/op,0 allocs | 67 µs/op,917 allocs |
+| 100 角色 × 100 权限(10 000 grants) | 33 ns/op,0 allocs | 0.55 ms/op,1517 allocs |
+| 1000 角色 × 10 权限(10 000 grants) | 33 ns/op,0 allocs | 0.91 ms/op,9030 allocs |
+| 1000 角色 × 100 权限(100 000 grants) | 35 ns/op,0 allocs | 7.0 ms/op,15 030 allocs |
 
-关键观察:命中与规模几乎无关(50–62 ns,因为是一次 map 查找)、命中路径 0 allocs、冷启随规模线性(主要开销在 store 读 + 继承链解析 + `grantedSet` 构造)。
+关键观察:命中与规模无关(一次 map 查找 + 通配判断)、命中路径 0 allocs、冷启随规模线性(主要开销在 store 读 + 继承链解析 + `grantedSet` 构造)。
 
-数字采集:AMD Ryzen 7 3700X,Go 1.25,`-benchtime=3s`,Linux/amd64。复现:
+数字采集:AMD Ryzen 9 7900X,Go 1.27,`-benchtime=3s`,Linux/amd64。复现:
 
 ```bash
 make bench    # authz / jwt / branca 三个包一起跑
@@ -162,15 +167,14 @@ make bench    # authz / jwt / branca 三个包一起跑
 
 | 操作 | HS256 | EdDSA | Branca |
 |---|---|---|---|
-| 签发(`Sign` / `Encode`) | 9.4 µs | 25.8 µs | 7.8 µs |
-| 校验(`Verify` / `Decode`) | 10.2 µs | 63.2 µs | 5.4 µs |
-| ~1 KiB 载荷的校验 | 5.8 ms | — | 0.11 ms |
+| 签发(`Encode`) | 2.0 µs | 16.7 µs | 5.1 µs |
+| 校验(`Decode`) | 4.4 µs | 39.0 µs | 2.9 µs |
+| ~1 KiB 载荷的校验 | 1.9 ms | — | 0.07 ms |
 
 观察:
 
-- **HS256 与 Branca 校验同量级**(~5–10 µs),均适合每次请求都验签。EdDSA 校验 63 µs,主要来自 Ed25519 验签本身的成本;若校验是热路径瓶颈,改用 HS256。
-- **Branca 签发比 HS256 快约 17%**(密文不需要 base64 编码、JWT 头部不需要 JSON 序列化),EdDSA 签发 26 µs 比 HS256 慢约 2.7×,但仍是每次请求可承受的成本。
-- **大载荷下 Branca 比 HS256 快 ~50 倍**:JWT 是 base64 明文,1 KiB claim 反序列化在 `encoding/json` 里要走一遍;Branca 是密文,AEAD 解密是定长操作。这是「载荷不透明」换来的实际收益——如果你的 token 要带不少业务字段,这是选 Branca 的硬理由。
+- **三方校验都在每次请求可承受的量级**;EdDSA 校验 39 µs 主要来自 Ed25519 验签本身的成本,若校验是热路径瓶颈,改用 HS256。
+- **大载荷下 Branca 比 HS256 快 ~27 倍**:JWT 是 base64 明文,1 KiB claim 反序列化在 `encoding/json` 里要走一遍;Branca 是密文,AEAD 解密是定长操作。这是「载荷不透明」换来的实际收益——如果你的 token 要带不少业务字段,这是选 Branca 的硬理由。
 
 ## 运行演示
 

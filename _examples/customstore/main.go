@@ -111,7 +111,7 @@ func (fs *fileStore) UpdateRole(r *libauth.Role) error {
 	return fs.save()
 }
 
-func (fs *fileStore) DeleteRole(name libauth.RoleName) error {
+func (fs *fileStore) DeleteRole(name libauth.RoleID) error {
 	if err := fs.MemoryStore.DeleteRole(name); err != nil {
 		return err
 	}

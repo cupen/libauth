@@ -4,3 +4,4 @@ bin/
 .tmp/
 *.test
 coverage.out
+.claude/
