@@ -6,37 +6,58 @@ import (
 )
 
 func (e *Enforcer) CreateUser(id model.UserID, roles ...model.RoleID) error {
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
 	if id == "" {
 		return store.ErrEmptyName
 	}
 	if err := e.store.CreateUser(&model.User{ID: id, Roles: append([]model.RoleID(nil), roles...)}); err != nil {
 		return err
 	}
-	for _, role := range roles {
-		e.grantHolder(id, role)
-	}
-	e.setDirectRoles(id, roles)
+	e.commit(func() {
+		for _, role := range roles {
+			holders, ok := e.roleHolders[role]
+			if !ok {
+				holders = make(map[model.UserID]struct{})
+				e.roleHolders[role] = holders
+			}
+			holders[id] = struct{}{}
+		}
+		if len(roles) > 0 {
+			set := make(map[model.RoleID]struct{}, len(roles))
+			for _, r := range roles {
+				set[r] = struct{}{}
+			}
+			e.directRoles[id] = set
+		}
+	})
 	return nil
 }
 
-// DeleteUser evicts cache and holders eagerly so observers stay consistent
-// even if DeleteUser fails.
+// DeleteUser removes the user from the store and drops every cache and
+// reverse-index entry it appears in.
 func (e *Enforcer) DeleteUser(id model.UserID) error {
-	e.cacheMu.Lock()
-	delete(e.cache, id)
-	delete(e.directRoles, id)
-	for _, holders := range e.roleHolders {
-		delete(holders, id)
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
+	if err := e.store.DeleteUser(id); err != nil {
+		return err
 	}
-	e.cacheMu.Unlock()
-
-	return e.store.DeleteUser(id)
+	e.commit(func() {
+		delete(e.cache, id)
+		delete(e.directRoles, id)
+		for _, holders := range e.roleHolders {
+			delete(holders, id)
+		}
+	})
+	return nil
 }
 
 func (e *Enforcer) GetUser(id model.UserID) (*model.User, error) { return e.store.GetUser(id) }
-func (e *Enforcer) ListUsers() ([]*model.User, error)             { return e.store.ListUsers() }
+func (e *Enforcer) ListUsers() ([]*model.User, error)            { return e.store.ListUsers() }
 
 func (e *Enforcer) AssignRole(id model.UserID, role model.RoleID) error {
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
 	if _, err := e.store.GetRole(role); err != nil {
 		return err
 	}
@@ -53,13 +74,26 @@ func (e *Enforcer) AssignRole(id model.UserID, role model.RoleID) error {
 	if err := e.store.UpdateUser(u); err != nil {
 		return err
 	}
-	e.grantHolder(id, role)
-	e.setDirectRoles(id, u.Roles)
-	e.invalidateUser(id)
+	e.commit(func() {
+		holders, ok := e.roleHolders[role]
+		if !ok {
+			holders = make(map[model.UserID]struct{})
+			e.roleHolders[role] = holders
+		}
+		holders[id] = struct{}{}
+		set := make(map[model.RoleID]struct{}, len(u.Roles))
+		for _, r := range u.Roles {
+			set[r] = struct{}{}
+		}
+		e.directRoles[id] = set
+		delete(e.cache, id)
+	})
 	return nil
 }
 
 func (e *Enforcer) RevokeRole(id model.UserID, role model.RoleID) error {
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
 	u, err := e.store.GetUser(id)
 	if err != nil {
 		return err
@@ -77,13 +111,23 @@ func (e *Enforcer) RevokeRole(id model.UserID, role model.RoleID) error {
 	if err := e.store.UpdateUser(u); err != nil {
 		return err
 	}
-	e.revokeHolder(id, role)
-	e.setDirectRoles(id, u.Roles)
-	e.invalidateUser(id)
+	e.commit(func() {
+		if holders, ok := e.roleHolders[role]; ok {
+			delete(holders, id)
+		}
+		set := make(map[model.RoleID]struct{}, len(u.Roles))
+		for _, r := range u.Roles {
+			set[r] = struct{}{}
+		}
+		e.directRoles[id] = set
+		delete(e.cache, id)
+	})
 	return nil
 }
 
 func (e *Enforcer) GrantDirectPermission(id model.UserID, p model.Permission) error {
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
 	if !p.Valid() {
 		return model.ErrInvalidPermission
 	}
@@ -105,6 +149,8 @@ func (e *Enforcer) GrantDirectPermission(id model.UserID, p model.Permission) er
 }
 
 func (e *Enforcer) RevokeDirectPermission(id model.UserID, p model.Permission) error {
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
 	if !p.Valid() {
 		return model.ErrInvalidPermission
 	}

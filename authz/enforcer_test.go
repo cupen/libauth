@@ -237,8 +237,9 @@ func TestCheckErrors(t *testing.T) {
 
 func TestUnknownRoleIgnoredInResolution(t *testing.T) {
 	e := newTestEnforcer(t)
-	// Directly inject a user with a dangling role via the store.
-	if err := e.Store().CreateUser(&model.User{ID: "eve", Roles: []model.RoleID{"ghost", "viewer"}}); err != nil {
+	// CreateUser does not require the roles to exist: a dangling role is
+	// skipped during resolution.
+	if err := e.CreateUser("eve", "ghost", "viewer"); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.Check("eve", perm("article:read")); err != nil {
@@ -282,23 +283,6 @@ func TestUpdateRole(t *testing.T) {
 	}
 	if err := e.Check("carol", perm("article:comment")); err != nil {
 		t.Errorf("carol should gain updated permission: %v", err)
-	}
-}
-
-func TestHasAllAnyPermissions(t *testing.T) {
-	e := newTestEnforcer(t)
-
-	ok, err := e.HasAllPermissions("bob", perm("article:create"), perm("article:read"))
-	if err != nil || !ok {
-		t.Errorf("bob should hold both: ok=%v err=%v", ok, err)
-	}
-	ok, err = e.HasAllPermissions("bob", perm("article:create"), perm("article:delete"))
-	if err != nil || ok {
-		t.Errorf("bob lacks delete: ok=%v err=%v", ok, err)
-	}
-	ok, err = e.HasAnyPermission("carol", perm("article:create"), perm("article:read"))
-	if err != nil || !ok {
-		t.Errorf("carol holds read: ok=%v err=%v", ok, err)
 	}
 }
 
@@ -347,11 +331,13 @@ func TestWithStoreOption(t *testing.T) {
 	if _, err := e.GetUser("pre"); err != nil {
 		t.Errorf("enforcer should see pre-existing users in the injected store: %v", err)
 	}
-	if e.Store() != shared {
-		t.Error("Store() should return the injected store")
+	// A second enforcer over the same store observes its writes.
+	e2 := New(WithStore(shared))
+	if err := e.CreateRole("shared-role", []model.Permission{perm("a:b")}, ""); err != nil {
+		t.Fatal(err)
 	}
-	if New().Store() == nil {
-		t.Error("default enforcer must always have a store")
+	if _, err := e2.GetRole("shared-role"); err != nil {
+		t.Errorf("second enforcer should see shared role: %v", err)
 	}
 }
 
@@ -564,7 +550,7 @@ func TestDeleteUser(t *testing.T) {
 	}
 }
 
-func TestHasRoleVariants(t *testing.T) {
+func TestHasRole(t *testing.T) {
 	e := newTestEnforcer(t)
 
 	// dave holds publisher, which inherits editor — HasRole is direct-only.
@@ -578,47 +564,23 @@ func TestHasRoleVariants(t *testing.T) {
 		t.Error("unknown role must not match")
 	}
 
-	if ok, err := e.HasAnyRole("carol", "admin", "viewer"); err != nil || !ok {
-		t.Errorf("carol holds viewer: ok=%v err=%v", ok, err)
-	}
-	if ok, err := e.HasAnyRole("carol", "admin"); err != nil || ok {
-		t.Errorf("carol holds no admin role: ok=%v err=%v", ok, err)
-	}
-	if ok, err := e.HasAllRoles("bob", "editor", "viewer"); err != nil || !ok {
-		t.Errorf("bob holds both roles: ok=%v err=%v", ok, err)
-	}
-	if ok, _ := e.HasAllRoles("bob", "editor", "admin"); ok {
-		t.Error("bob lacks admin")
-	}
-
-	// Vacuous calls: all-of-nothing passes, any-of-nothing fails.
-	if ok, err := e.HasAllRoles("bob"); err != nil || !ok {
-		t.Errorf("HasAllRoles with no roles must pass: ok=%v err=%v", ok, err)
-	}
-	if ok, _ := e.HasAnyRole("bob"); ok {
-		t.Error("HasAnyRole with no roles must fail")
-	}
-
 	// Unknown users error out consistently.
 	if _, err := e.HasRole("ghost", "viewer"); !errors.Is(err, store.ErrUserNotFound) {
 		t.Errorf("HasRole: got %v", err)
 	}
-	if _, err := e.HasAnyRole("ghost", "viewer"); !errors.Is(err, store.ErrUserNotFound) {
-		t.Errorf("HasAnyRole: got %v", err)
-	}
-	if _, err := e.HasAllRoles("ghost", "viewer"); !errors.Is(err, store.ErrUserNotFound) {
-		t.Errorf("HasAllRoles: got %v", err)
-	}
 }
 
-func TestAllPermissionsAndAnyPermissionsEmpty(t *testing.T) {
+func TestHasPermission(t *testing.T) {
 	e := newTestEnforcer(t)
 
-	// Vacuous semantics mirror HasAllRoles/HasAnyRole.
-	if ok, err := e.HasAllPermissions("bob"); err != nil || !ok {
-		t.Errorf("HasAllPermissions with no permissions must pass: ok=%v err=%v", ok, err)
+	ok, err := e.HasPermission("bob", perm("article:read"))
+	if err != nil || !ok {
+		t.Errorf("bob holds read: ok=%v err=%v", ok, err)
 	}
-	if ok, _ := e.HasAnyPermission("bob"); ok {
-		t.Error("HasAnyPermission with no permissions must fail")
+	if ok, _ := e.HasPermission("carol", perm("article:create")); ok {
+		t.Error("carol must not create")
+	}
+	if _, err := e.HasPermission("ghost", perm("article:read")); !errors.Is(err, store.ErrUserNotFound) {
+		t.Errorf("unknown user: got %v", err)
 	}
 }

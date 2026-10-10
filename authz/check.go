@@ -17,41 +17,6 @@ func (e *Enforcer) HasRole(id model.UserID, role model.RoleID) (bool, error) {
 	return ok, nil
 }
 
-// HasAnyRole reports whether the user holds any of the roles directly.
-func (e *Enforcer) HasAnyRole(id model.UserID, roles ...model.RoleID) (bool, error) {
-	if len(roles) == 0 {
-		return false, nil
-	}
-	set, err := e.directRolesOf(id)
-	if err != nil {
-		return false, err
-	}
-	for _, role := range roles {
-		if _, ok := set[role]; ok {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// HasAllRoles reports whether the user holds every listed role directly.
-// The empty list is vacuously true.
-func (e *Enforcer) HasAllRoles(id model.UserID, roles ...model.RoleID) (bool, error) {
-	if len(roles) == 0 {
-		return true, nil
-	}
-	set, err := e.directRolesOf(id)
-	if err != nil {
-		return false, err
-	}
-	for _, role := range roles {
-		if _, ok := set[role]; !ok {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
 func (e *Enforcer) HasPermission(id model.UserID, required model.Permission) (bool, error) {
 	set, err := e.getGrantedSet(id)
 	if err != nil {
@@ -63,13 +28,25 @@ func (e *Enforcer) HasPermission(id model.UserID, required model.Permission) (bo
 // Check returns nil when access is granted. On denial it returns a
 // *model.PermissionDeniedError matchable via errors.Is with
 // model.ErrPermissionDenied.
+//
+// The allow path is the hot one: a warm check is a few map lookups and
+// never touches the store. The store is read once more only to populate
+// the denial error's context.
 func (e *Enforcer) Check(id model.UserID, required model.Permission) error {
-	set, u, roles, err := e.getGrantedSetFull(id)
+	set, err := e.getGrantedSet(id)
 	if err != nil {
 		return err
 	}
 	if set.has(required) {
 		return nil
+	}
+	u, err := e.store.GetUser(id)
+	if err != nil {
+		return err
+	}
+	roles, err := e.resolveRoles(u)
+	if err != nil {
+		roles = u.Roles
 	}
 	return &model.PermissionDeniedError{
 		UserID:   id,
@@ -77,32 +54,6 @@ func (e *Enforcer) Check(id model.UserID, required model.Permission) error {
 		Required: required,
 		Roles:    roles,
 	}
-}
-
-func (e *Enforcer) HasAllPermissions(id model.UserID, required ...model.Permission) (bool, error) {
-	set, err := e.getGrantedSet(id)
-	if err != nil {
-		return false, err
-	}
-	for _, p := range required {
-		if !set.has(p) {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
-func (e *Enforcer) HasAnyPermission(id model.UserID, required ...model.Permission) (bool, error) {
-	set, err := e.getGrantedSet(id)
-	if err != nil {
-		return false, err
-	}
-	for _, p := range required {
-		if set.has(p) {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // PermissionsFor returns every permission the user effectively holds,
