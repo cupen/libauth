@@ -17,7 +17,7 @@ type benchSession struct {
 	Scope string `json:"scope,omitempty"`
 }
 
-func (s benchSession) MarshalBinary() ([]byte, error)   { return json.Marshal(s) }
+func (s benchSession) MarshalBinary() ([]byte, error)  { return json.Marshal(s) }
 func (s *benchSession) UnmarshalBinary(b []byte) error { return json.Unmarshal(b, s) }
 
 func newBenchBranca() *Branca {

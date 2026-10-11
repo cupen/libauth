@@ -32,8 +32,8 @@ var (
 	// authenticate against downstream.
 	ErrMissingSubject = errors.New("libauth: claims must carry a subject (set Claims.Subject)")
 
-	ErrReservedClaim = errors.New("libauth: extra claim collides with a registered claim")
-	ErrIssuerMismatch = errors.New("libauth: token issuer does not match")
+	ErrReservedClaim    = errors.New("libauth: extra claim collides with a registered claim")
+	ErrIssuerMismatch   = errors.New("libauth: token issuer does not match")
 	ErrAudienceMismatch = errors.New("libauth: token audience does not match")
-	ErrInvalidKey = errors.New("libauth: invalid key")
+	ErrInvalidKey       = errors.New("libauth: invalid key")
 )

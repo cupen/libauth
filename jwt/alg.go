@@ -11,7 +11,7 @@ import (
 
 var b64 = base64.RawURLEncoding
 
-func b64encode(b []byte) string { return b64.EncodeToString(b) }
+func b64encode(b []byte) string          { return b64.EncodeToString(b) }
 func b64decode(s string) ([]byte, error) { return b64.DecodeString(s) }
 
 // algorithm is the pinned signing scheme behind a Signer or Verifier. Each
