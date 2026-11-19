@@ -65,15 +65,6 @@ func (b *Bytes) UnmarshalBinary(raw []byte) error {
 	return nil
 }
 
-// Payload is the pair of standard library interfaces typed payloads
-// implement. Pin it down with the canonical compile-time check:
-//
-//	var _ branca.Payload = (*Session)(nil)
-type Payload interface {
-	encoding.BinaryMarshaler
-	encoding.BinaryUnmarshaler
-}
-
 // Branca encodes and decodes branca tokens with one 32-byte key. Safe for
 // concurrent use.
 type Branca struct {
