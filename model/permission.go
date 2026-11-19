@@ -8,6 +8,15 @@ import (
 	"strings"
 )
 
+// Built-in action names. Actions remain open-ended strings, so callers may
+// use any custom name without registering it. Each action is independent:
+// write does not imply read, and exec implies neither.
+const (
+	ActionRead  = "read"
+	ActionWrite = "write"
+	ActionExec  = "exec"
+)
+
 // Permission is a {Resource, Action} pair. Either field may be "*" as a
 // wildcard; {Resource: "*"} alone grants everything.
 type Permission struct {

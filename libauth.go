@@ -31,6 +31,13 @@ type (
 	Role       = model.Role
 )
 
+// Built-in action names. Custom string actions are also supported.
+const (
+	ActionRead  = model.ActionRead
+	ActionWrite = model.ActionWrite
+	ActionExec  = model.ActionExec
+)
+
 // ParsePermission parses a "resource:action" string into a Permission.
 func ParsePermission(s string) (Permission, error) { return model.ParsePermission(s) }
 
