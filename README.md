@@ -62,7 +62,7 @@ publish := libauth.Permission{Resource: "article", Action: "publish"} // 自定�
 - 权限：`GrantPermission` / `RevokePermission`（角色）；`GrantDirectPermission` / `RevokeDirectPermission`（用户直授）
 - 检查：`Check`（返回错误）、`HasPermission`、`HasRole`（直接持有，不含继承）；组合语义自己循环即可
 - 汇总：`PermissionsFor`（用户的有效权限全集，去重排序）
-- 构造：`libauth.New()`，可选 `libauth.WithStore(s)`、`libauth.WithMaxDepth(n)`、`libauth.WithCacheCapacity(n)`、`libauth.WithCacheTTL(d)`、`libauth.WithUnboundedCache()`；用户缓存默认最多 10000 条、24 小时未访问过期
+- 构造：`libauth.New()`，可选 `libauth.WithStore(s)`、`libauth.WithMaxDepth(n)`、`libauth.WithCacheSize(n)`、`libauth.WithCacheTTL(d)`、`libauth.WithUnboundedCache()`；用户缓存默认最多 10000 条、24 小时未访问过期
 
 并发契约：读（`Check` / `Has*` / `PermissionsFor` 等）可任意并发；写（`AssignRole` 等变更）之间串行化、不丢更新；变更返回后，后续读立即看到新状态。用户级写入只失效该用户缓存；角色级写入清空整个用户缓存。`Enforcer` 必须是其 `Store` 的唯一写入方。
 
@@ -91,7 +91,7 @@ publish := libauth.Permission{Resource: "article", Action: "publish"} // 自定�
 
 - **几千到几万用户**：默认形态通常可接受；
 - **10 万级用户**：应避免 `MemoryStore`，改用外部 Store；`Enforcer` 缓存默认仍有界；
-- **百万级注册用户**：必须使用外部 Store。默认用户缓存仍被限制在 10000 条；条目大小随权限规模变化，可用 `WithCacheCapacity` / `WithCacheTTL` 调整，或用 `WithUnboundedCache()` 显式恢复旧的无界行为。
+- **百万级注册用户**：必须使用外部 Store。默认用户缓存仍被限制在 10000 条；条目大小随权限规模变化，可用 `WithCacheSize` / `WithCacheTTL` 调整，或用 `WithUnboundedCache()` 显式恢复旧的无界行为。
 
 ## HTTP 中间件
 

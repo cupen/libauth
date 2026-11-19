@@ -54,8 +54,10 @@ type (
 )
 
 const (
-	DefaultMaxDepth      = authz.DefaultMaxDepth
-	DefaultCacheCapacity = authz.DefaultCacheCapacity
+	DefaultMaxDepth  = authz.DefaultMaxDepth
+	DefaultCacheSize = authz.DefaultCacheSize
+	// Deprecated: use DefaultCacheSize instead.
+	DefaultCacheCapacity = DefaultCacheSize
 	DefaultCacheTTL      = authz.DefaultCacheTTL
 )
 
@@ -65,7 +67,11 @@ func New(opts ...Option) *Enforcer { return authz.New(opts...) }
 func WithStore(s Store) Option  { return authz.WithStore(s) }
 func WithMaxDepth(n int) Option { return authz.WithMaxDepth(n) }
 
-func WithCacheCapacity(n int) Option { return authz.WithCacheCapacity(n) }
+func WithCacheSize(n int) Option { return authz.WithCacheSize(n) }
+
+// Deprecated: use WithCacheSize instead.
+func WithCacheCapacity(n int) Option { return WithCacheSize(n) }
+
 func WithCacheTTL(d time.Duration) Option {
 	return authz.WithCacheTTL(d)
 }

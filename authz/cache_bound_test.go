@@ -11,32 +11,44 @@ import (
 )
 
 func TestCacheOptionDefaultsAndOverrides(t *testing.T) {
+	if DefaultCacheSize != 10_000 || DefaultCacheCapacity != DefaultCacheSize {
+		t.Fatalf("default cache size = %d, legacy alias = %d, want 10000", DefaultCacheSize, DefaultCacheCapacity)
+	}
 	e := New()
-	if e.cacheCapacity != DefaultCacheCapacity {
-		t.Fatalf("default capacity = %d, want %d", e.cacheCapacity, DefaultCacheCapacity)
+	if e.cacheSize != DefaultCacheSize {
+		t.Fatalf("default capacity = %d, want %d", e.cacheSize, DefaultCacheSize)
 	}
 	if e.cacheTTL != DefaultCacheTTL {
 		t.Fatalf("default TTL = %s, want %s", e.cacheTTL, DefaultCacheTTL)
 	}
 
-	e = New(WithCacheCapacity(2), WithCacheTTL(time.Minute))
-	if e.cacheCapacity != 2 || e.cacheTTL != time.Minute {
-		t.Fatalf("explicit options: capacity=%d ttl=%s", e.cacheCapacity, e.cacheTTL)
+	e = New(WithCacheSize(2), WithCacheTTL(time.Minute))
+	if e.cacheSize != 2 || e.cacheTTL != time.Minute {
+		t.Fatalf("explicit options: capacity=%d ttl=%s", e.cacheSize, e.cacheTTL)
 	}
 
-	e = New(WithCacheCapacity(-1), WithCacheTTL(-time.Second))
-	if e.cacheCapacity != DefaultCacheCapacity || e.cacheTTL != DefaultCacheTTL {
-		t.Fatalf("invalid options changed defaults: capacity=%d ttl=%s", e.cacheCapacity, e.cacheTTL)
+	e = New(WithCacheSize(-1), WithCacheTTL(-time.Second))
+	if e.cacheSize != DefaultCacheSize || e.cacheTTL != DefaultCacheTTL {
+		t.Fatalf("invalid options changed defaults: capacity=%d ttl=%s", e.cacheSize, e.cacheTTL)
 	}
 
-	e = New(WithCacheCapacity(2), WithUnboundedCache())
-	if e.cacheCapacity != 0 {
-		t.Fatalf("WithUnboundedCache: capacity=%d, want 0", e.cacheCapacity)
+	e = New(WithCacheSize(2), WithUnboundedCache())
+	if e.cacheSize != 0 {
+		t.Fatalf("WithUnboundedCache: capacity=%d, want 0", e.cacheSize)
 	}
 
 	e = New(WithCacheTTL(0))
 	if e.cacheTTL != 0 {
 		t.Fatalf("WithCacheTTL(0): ttl=%s, want disabled", e.cacheTTL)
+	}
+
+	e = New(WithCacheCapacity(3))
+	if e.cacheSize != 3 {
+		t.Fatalf("legacy WithCacheCapacity: size=%d, want 3", e.cacheSize)
+	}
+	e = New(WithCacheCapacity(-1))
+	if e.cacheSize != DefaultCacheSize {
+		t.Fatalf("legacy invalid capacity changed default size to %d", e.cacheSize)
 	}
 }
 
@@ -60,8 +72,8 @@ func TestCreateUserDoesNotPopulateCache(t *testing.T) {
 	}
 }
 
-func TestCacheCapacitySecondChance(t *testing.T) {
-	e := New(WithCacheCapacity(2), WithCacheTTL(0))
+func TestCacheSizeSecondChance(t *testing.T) {
+	e := New(WithCacheSize(2), WithCacheTTL(0))
 	if err := e.CreateRole("viewer", []model.Permission{perm("article:read")}, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -275,23 +287,23 @@ func TestHasRoleColdCacheRacingMutationReturnsFresh(t *testing.T) {
 	}
 }
 
-func TestDefaultCacheCapacityBoundsManyUsers(t *testing.T) {
+func TestDefaultCacheSizeBoundsManyUsers(t *testing.T) {
 	e := New(WithCacheTTL(0))
 	if err := e.CreateRole("viewer", []model.Permission{perm("article:read")}, ""); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i <= DefaultCacheCapacity; i++ {
+	for i := 0; i <= DefaultCacheSize; i++ {
 		if err := e.CreateUser(model.UserID("u"+strconv.Itoa(i)), "viewer"); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for i := 0; i <= DefaultCacheCapacity; i++ {
+	for i := 0; i <= DefaultCacheSize; i++ {
 		if err := e.Check(model.UserID("u"+strconv.Itoa(i)), perm("article:read")); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if got := len(e.cache); got > DefaultCacheCapacity {
-		t.Fatalf("cache entries = %d, want <= %d", got, DefaultCacheCapacity)
+	if got := len(e.cache); got > DefaultCacheSize {
+		t.Fatalf("cache entries = %d, want <= %d", got, DefaultCacheSize)
 	}
 }
 
@@ -321,7 +333,7 @@ func (s *gatedStore) GetUser(id model.UserID) (*model.User, error) {
 
 func BenchmarkCheckWithEviction(b *testing.B) {
 	const users = 16
-	e := New(WithCacheCapacity(users-1), WithCacheTTL(0))
+	e := New(WithCacheSize(users-1), WithCacheTTL(0))
 	if err := e.CreateRole("viewer", []model.Permission{perm("article:read")}, ""); err != nil {
 		b.Fatal(err)
 	}

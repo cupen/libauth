@@ -14,10 +14,14 @@ import (
 // DefaultMaxDepth bounds role-inheritance resolution.
 const DefaultMaxDepth = 32
 
-// DefaultCacheCapacity bounds how many per-user permission caches stay in
+// DefaultCacheSize bounds how many per-user permission caches stay in
 // memory. Registration alone does not consume cache space; entries are
 // created lazily by Check, HasRole, HasPermission and PermissionsFor.
-const DefaultCacheCapacity = 10_000
+const DefaultCacheSize = 10_000
+
+// DefaultCacheCapacity is the former name of DefaultCacheSize.
+// Deprecated: use DefaultCacheSize instead.
+const DefaultCacheCapacity = DefaultCacheSize
 
 // DefaultCacheTTL is how long an unused user cache entry stays eligible for
 // hits. A zero TTL configured through WithCacheTTL disables time expiry.
@@ -38,14 +42,14 @@ const DefaultCacheTTL = 24 * time.Hour
 // cache invalidation and can leave stale answers behind.
 //
 // A accessed user gets a memoized cache entry holding its effective permission
-// set and direct-role set. Entries are bounded by DefaultCacheCapacity and
+// set and direct-role set. Entries are bounded by DefaultCacheSize and
 // expire after DefaultCacheTTL without access; role mutations flush the whole
 // user cache rather than maintaining per-role reverse indexes.
 type Enforcer struct {
-	store         store.Store
-	maxDepth      int
-	cacheCapacity int
-	cacheTTL      time.Duration
+	store     store.Store
+	maxDepth  int
+	cacheSize int
+	cacheTTL  time.Duration
 	// cacheNow is the cache clock. It is deliberately unexported: production
 	// uses time.Now while package tests advance it deterministically.
 	cacheNow func() time.Time
@@ -143,15 +147,19 @@ func WithMaxDepth(n int) Option {
 	}
 }
 
-// WithCacheCapacity bounds the number of lazily populated user cache entries.
+// WithCacheSize bounds the number of lazily populated user cache entries.
 // Non-positive values are ignored.
-func WithCacheCapacity(n int) Option {
+func WithCacheSize(n int) Option {
 	return func(e *Enforcer) {
 		if n > 0 {
-			e.cacheCapacity = n
+			e.cacheSize = n
 		}
 	}
 }
+
+// WithCacheCapacity is the former name of WithCacheSize.
+// Deprecated: use WithCacheSize instead.
+func WithCacheCapacity(n int) Option { return WithCacheSize(n) }
 
 // WithCacheTTL sets how long an unused entry remains eligible for hits.
 // Zero disables time expiry; negative values are ignored.
@@ -167,17 +175,17 @@ func WithCacheTTL(d time.Duration) Option {
 // kept until invalidated and capacity never triggers eviction. TTL settings
 // are unaffected.
 func WithUnboundedCache() Option {
-	return func(e *Enforcer) { e.cacheCapacity = 0 }
+	return func(e *Enforcer) { e.cacheSize = 0 }
 }
 
 func New(opts ...Option) *Enforcer {
 	e := &Enforcer{
-		store:         store.NewMemoryStore(),
-		maxDepth:      DefaultMaxDepth,
-		cacheCapacity: DefaultCacheCapacity,
-		cacheTTL:      DefaultCacheTTL,
-		cacheNow:      time.Now,
-		cache:         make(map[model.UserID]*cacheEntry),
+		store:     store.NewMemoryStore(),
+		maxDepth:  DefaultMaxDepth,
+		cacheSize: DefaultCacheSize,
+		cacheTTL:  DefaultCacheTTL,
+		cacheNow:  time.Now,
+		cache:     make(map[model.UserID]*cacheEntry),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -266,11 +274,11 @@ func (e *Enforcer) installEntryLocked(entry *cacheEntry, now time.Time) {
 		return
 	}
 	e.cache[entry.uid] = entry
-	if e.cacheCapacity <= 0 {
+	if e.cacheSize <= 0 {
 		return
 	}
 	if len(e.clockRing) == 0 {
-		e.clockRing = make([]*cacheEntry, e.cacheCapacity)
+		e.clockRing = make([]*cacheEntry, e.cacheSize)
 	}
 
 	for {
