@@ -14,41 +14,20 @@ func (e *Enforcer) CreateUser(id model.UserID, roles ...model.RoleID) error {
 	if err := e.store.CreateUser(&model.User{ID: id, Roles: append([]model.RoleID(nil), roles...)}); err != nil {
 		return err
 	}
-	e.commit(func() {
-		for _, role := range roles {
-			holders, ok := e.roleHolders[role]
-			if !ok {
-				holders = make(map[model.UserID]struct{})
-				e.roleHolders[role] = holders
-			}
-			holders[id] = struct{}{}
-		}
-		if len(roles) > 0 {
-			set := make(map[model.RoleID]struct{}, len(roles))
-			for _, r := range roles {
-				set[r] = struct{}{}
-			}
-			e.directRoles[id] = set
-		}
-	})
+	// Registration itself creates no cache entry. The bump still closes the
+	// linearization point for readers that computed the same user concurrently.
+	e.commit(func() {})
 	return nil
 }
 
-// DeleteUser removes the user from the store and drops every cache and
-// reverse-index entry it appears in.
+// DeleteUser removes the user from the store and drops its cache entry.
 func (e *Enforcer) DeleteUser(id model.UserID) error {
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()
 	if err := e.store.DeleteUser(id); err != nil {
 		return err
 	}
-	e.commit(func() {
-		delete(e.cache, id)
-		delete(e.directRoles, id)
-		for _, holders := range e.roleHolders {
-			delete(holders, id)
-		}
-	})
+	e.invalidateUser(id)
 	return nil
 }
 
@@ -74,20 +53,7 @@ func (e *Enforcer) AssignRole(id model.UserID, role model.RoleID) error {
 	if err := e.store.UpdateUser(u); err != nil {
 		return err
 	}
-	e.commit(func() {
-		holders, ok := e.roleHolders[role]
-		if !ok {
-			holders = make(map[model.UserID]struct{})
-			e.roleHolders[role] = holders
-		}
-		holders[id] = struct{}{}
-		set := make(map[model.RoleID]struct{}, len(u.Roles))
-		for _, r := range u.Roles {
-			set[r] = struct{}{}
-		}
-		e.directRoles[id] = set
-		delete(e.cache, id)
-	})
+	e.invalidateUser(id)
 	return nil
 }
 
@@ -111,17 +77,7 @@ func (e *Enforcer) RevokeRole(id model.UserID, role model.RoleID) error {
 	if err := e.store.UpdateUser(u); err != nil {
 		return err
 	}
-	e.commit(func() {
-		if holders, ok := e.roleHolders[role]; ok {
-			delete(holders, id)
-		}
-		set := make(map[model.RoleID]struct{}, len(u.Roles))
-		for _, r := range u.Roles {
-			set[r] = struct{}{}
-		}
-		e.directRoles[id] = set
-		delete(e.cache, id)
-	})
+	e.invalidateUser(id)
 	return nil
 }
 

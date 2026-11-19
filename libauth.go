@@ -15,6 +15,8 @@
 package libauth
 
 import (
+	"time"
+
 	"github.com/cupen/libauth/authz"
 	"github.com/cupen/libauth/model"
 	"github.com/cupen/libauth/store"
@@ -44,10 +46,20 @@ type (
 	Option   = authz.Option
 )
 
-const DefaultMaxDepth = authz.DefaultMaxDepth
+const (
+	DefaultMaxDepth      = authz.DefaultMaxDepth
+	DefaultCacheCapacity = authz.DefaultCacheCapacity
+	DefaultCacheTTL      = authz.DefaultCacheTTL
+)
 
 // New creates an Enforcer backed by an in-memory store by default.
 func New(opts ...Option) *Enforcer { return authz.New(opts...) }
 
 func WithStore(s Store) Option  { return authz.WithStore(s) }
 func WithMaxDepth(n int) Option { return authz.WithMaxDepth(n) }
+
+func WithCacheCapacity(n int) Option { return authz.WithCacheCapacity(n) }
+func WithCacheTTL(d time.Duration) Option {
+	return authz.WithCacheTTL(d)
+}
+func WithUnboundedCache() Option { return authz.WithUnboundedCache() }

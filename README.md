@@ -54,11 +54,36 @@ m.Check("bob", libauth.Permission{"article", "publish"})  // nil
 - 权限：`GrantPermission` / `RevokePermission`（角色）；`GrantDirectPermission` / `RevokeDirectPermission`（用户直授）
 - 检查：`Check`（返回错误）、`HasPermission`、`HasRole`（直接持有，不含继承）；组合语义自己循环即可
 - 汇总：`PermissionsFor`（用户的有效权限全集，去重排序）
-- 构造：`libauth.New()`，可选 `libauth.WithStore(s)`、`libauth.WithMaxDepth(n)`
+- 构造：`libauth.New()`，可选 `libauth.WithStore(s)`、`libauth.WithMaxDepth(n)`、`libauth.WithCacheCapacity(n)`、`libauth.WithCacheTTL(d)`、`libauth.WithUnboundedCache()`；用户缓存默认最多 10000 条、24 小时未访问过期
 
-并发契约：读（`Check` / `Has*` / `PermissionsFor` 等）可任意并发；写（`AssignRole` 等变更）之间串行化、不丢更新；变更返回后，后续读立即看到新状态。`Enforcer` 必须是其 `Store` 的唯一写入方。
+并发契约：读（`Check` / `Has*` / `PermissionsFor` 等）可任意并发；写（`AssignRole` 等变更）之间串行化、不丢更新；变更返回后，后续读立即看到新状态。用户级写入只失效该用户缓存；角色级写入清空整个用户缓存。`Enforcer` 必须是其 `Store` 的唯一写入方。
 
 `Store` 接口（见 [store/store.go](store/store.go)）定义了持久化契约，内置 `MemoryStore` 是参考实现；接入 MySQL/Postgres 时实现该接口并通过 `libauth.New(libauth.WithStore(myStore))` 注入。
+
+### 内存模型与适用规模
+
+`MemoryStore` 和 `Enforcer` 缓存的内存语义不同，使用前请区分：
+
+| 数据 | 何时进入内存 | 生命周期 |
+|---|---|---|
+| `MemoryStore` 的 `User` / `Role` | `CreateUser` / `CreateRole` 立即保存 | 直到对应 `Delete*`；这是内存参考实现，不是缓存 |
+| `Enforcer` 用户缓存（direct roles + `grantedSet`） | 第一次 `Check` / `HasRole` / `HasPermission` / `PermissionsFor` 时懒构建 | 默认最多 10000 个用户、24 小时未访问过期；容量满时用 second-chance 淘汰 |
+
+注册本身不会在 `Enforcer` 中建立反向索引或权限缓存；低频用户只有被访问后才会短暂占一个缓存名额。用户级写入只移除该用户条目；角色级写入清空整个用户缓存，因此不需要随注册规模增长的 `roleHolders` / `directRoles` 索引。
+
+一组 Linux/amd64、Go 1.27 下的参考测量（10 万用户、每人 1 个角色、角色 1 个权限，强制 GC 后读堆内存）：
+
+| 阶段 | 堆内存 | 说明 |
+|---|---:|---|
+| 仅 `MemoryStore` 保存用户 | 13 MB | 131 B/用户，注册数据本体 |
+| `Enforcer.CreateUser` 注册完成 | 13 MB | 注册不再额外建立 Enforcer 索引 |
+| 每个用户 `Check` 一次后 | 30 MB | 缓存最多保留 10000 个用户，本例约增加 16 MB |
+
+实际占用随用户 ID 长度、角色数、权限数和角色组合而变。规模判断：
+
+- **几千到几万用户**：默认形态通常可接受；
+- **10 万级用户**：应避免 `MemoryStore`，改用外部 Store；`Enforcer` 缓存默认仍有界；
+- **百万级注册用户**：必须使用外部 Store。默认用户缓存仍被限制在 10000 条；条目大小随权限规模变化，可用 `WithCacheCapacity` / `WithCacheTTL` 调整，或用 `WithUnboundedCache()` 显式恢复旧的无界行为。
 
 ## HTTP 中间件
 
@@ -143,19 +168,19 @@ mw, _ := libauth.NewMiddleware(m, identity)
 
 ## 性能
 
-权限检查是热路径,`authz.Enforcer` 对每个用户维护已授予权限集合的内存缓存(`grantedSet`,扁平化 `{Resource: {Action}}` 索引),命中只走几次 map 查找、零分配;写路径由 `Enforcer` 集中失效(含继承子树),读侧无锁。命中路径有一个 `TestCheckWarmPathZeroAllocs` 回归测试钉住"零分配"契约。
+权限检查是热路径,`authz.Enforcer` 对每个被访问用户维护一条缓存 entry(直接角色 + `grantedSet` 扁平化 `{Resource: {Action}}` 索引)。命中路径只持读锁、做 map 查找并原子更新 TTL/second-chance 标记,仍保持零分配;`TestCheckWarmPathZeroAllocs` 钉住这个契约。用户级写入只失效一个 entry;角色级写入清空整个用户缓存,代价 O(capacity),但角色变更是低频管理操作。
 
 `make bench` 跑 `authz` 包的 `Check` 微基准,规模按"角色数 × 每角色权限数"标注,缓存命中与冷启动两路数字:
 
 | 规模 | 命中 | 冷启 |
 |---|---|---|
-| 单用户 + `*`(参照点) | **13 ns/op**,0 allocs | 0.41 µs/op,15 allocs |
-| 100 角色 × 10 权限(1 000 grants) | 32 ns/op,0 allocs | 67 µs/op,917 allocs |
-| 100 角色 × 100 权限(10 000 grants) | 33 ns/op,0 allocs | 0.55 ms/op,1517 allocs |
-| 1000 角色 × 10 权限(10 000 grants) | 33 ns/op,0 allocs | 0.91 ms/op,9030 allocs |
-| 1000 角色 × 100 权限(100 000 grants) | 35 ns/op,0 allocs | 7.0 ms/op,15 030 allocs |
+| 单用户 + `*`(参照点) | **56 ns/op**,0 allocs | 1.0 µs/op,18 allocs |
+| 100 角色 × 10 权限(1 000 grants) | 77 ns/op,0 allocs | 74 µs/op,922 allocs |
+| 100 角色 × 100 权限(10 000 grants) | 76 ns/op,0 allocs | 0.70 ms/op,1522 allocs |
+| 1000 角色 × 10 权限(10 000 grants) | 78 ns/op,0 allocs | 0.96 ms/op,9037 allocs |
+| 1000 角色 × 100 权限(100 000 grants) | 80 ns/op,0 allocs | 7.2 ms/op,15 037 allocs |
 
-关键观察:命中与规模无关(一次 map 查找 + 通配判断)、命中路径 0 allocs、冷启随规模线性(主要开销在 store 读 + 继承链解析 + `grantedSet` 构造)。
+关键观察:命中耗时与授权规模基本无关,但比无 TTL 版本多出时间戳与引用位的原子更新;命中路径 0 allocs;冷启随规模线性(主要开销在 store 读 + 继承链解析 + `grantedSet` 构造)。容量 15、16 个用户轮流访问时的 `BenchmarkCheckWithEviction` 约 0.66 µs/op、19 allocs——淘汰只发生在 miss 安装阶段,不进入命中热路径。
 
 数字采集:AMD Ryzen 9 7900X,Go 1.27,`-benchtime=3s`,Linux/amd64。复现:
 
