@@ -35,9 +35,7 @@ func signToken(t *testing.T, subject string, issued, expires time.Time) string {
 	return token
 }
 
-// jwtIdentityFunc is the bearer-token glue tests attach to the middleware.
-// The same shape — extract the bearer, verify, return sub — is what
-// production code wires up (see _examples/jwtauth).
+// jwtIdentityFunc extracts the bearer, verifies it and returns sub.
 func jwtIdentityFunc(v *jwt.JWT) IdentityFunc {
 	return func(r *http.Request) (UserID, error) {
 		h := r.Header.Get("Authorization")
@@ -79,7 +77,7 @@ func TestJWTIdentityExtraction(t *testing.T) {
 		{"scheme only", "Bearer", "", errMissingBearer},
 		{"empty token", "Bearer   ", "", errMissingBearer},
 		{"expired token", "Bearer " + signToken(t, "bob", now.Add(-2*time.Hour), now.Add(-time.Hour)), "", jwt.ErrTokenExpired},
-		{"forged token", "Bearer " + flipLastChar(signToken(t, "bob", now, now.Add(time.Hour))), "", jwt.ErrTokenBadSignature},
+		{"forged token", "Bearer " + corruptSignature(signToken(t, "bob", now, now.Add(time.Hour))), "", jwt.ErrTokenBadSignature},
 	}
 
 	for _, tc := range cases {
@@ -90,7 +88,7 @@ func TestJWTIdentityExtraction(t *testing.T) {
 			}
 			id, err := identity(req)
 			if tc.wantErr != nil {
-				if !errors.Is(err, tc.wantErr) && err.Error() != tc.wantErr.Error() {
+				if err == nil || (!errors.Is(err, tc.wantErr) && err.Error() != tc.wantErr.Error()) {
 					t.Fatalf("identity: err = %v, want %v", err, tc.wantErr)
 				}
 				return
@@ -110,9 +108,7 @@ func TestJWTSignWithoutSubjectRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Sign must refuse to issue a token with no Subject: libauth uses sub
-	// as the user ID, so a token without it has nothing downstream can
-	// authenticate against.
+	// sub is the user ID, so it is mandatory.
 	if _, err := j.Encode(jwt.Claims{}); !errors.Is(err, jwt.ErrMissingSubject) {
 		t.Fatalf("Sign(empty): err = %v, want ErrMissingSubject", err)
 	}
@@ -178,21 +174,20 @@ func bearerRequest(t *testing.T, token string) *http.Request {
 	return req
 }
 
-// errMissingBearer is the failure the inline identity returns when the
-// Authorization header is missing or doesn't carry a Bearer token. We
-// compare against this sentinel by string to keep the test focused on the
-// outcome (401 path) rather than the specific error value, which each
-// caller is free to choose.
+// errMissingBearer is returned by the inline identity; tests match it by
+// string because each caller picks its own error value.
 var errMissingBearer = errors.New("missing bearer token")
 
-// flipLastChar deterministically corrupts a token so its signature breaks.
-func flipLastChar(s string) string {
-	if s == "" {
+// corruptSignature changes the first signature byte. The final base64url
+// character is not usable here: its trailing bits are ignored on decode.
+func corruptSignature(s string) string {
+	i := strings.LastIndexByte(s, '.')
+	if i < 0 || i+2 > len(s) {
 		return s
 	}
-	replacement := byte('A')
-	if s[len(s)-1] == 'A' {
-		replacement = 'B'
+	c := byte('A')
+	if s[i+1] == 'A' {
+		c = 'B'
 	}
-	return s[:len(s)-1] + string(replacement)
+	return s[:i+1] + string(c) + s[i+2:]
 }
