@@ -2,7 +2,7 @@
 
 # libauth
 
-Go 的多角色权限控制（RBAC）：用户持有多个角色，角色单链继承，权限是带通配符的 `资源:操作` 字符串。核心零三方依赖，可插拔 `Store`，自带 `net/http` 中间件与 JWT / Branca 令牌。
+Go 的认证与鉴权工具集：权限采用 RBAC 模型（多角色、单链继承、通配符 `资源:操作`），并提供 `net/http` 中间件、JWT / Branca 令牌与 TOTP 动态口令。核心零三方依赖，`Store` 可插拔。
 
 ## 特性
 
@@ -10,6 +10,7 @@ Go 的多角色权限控制（RBAC）：用户持有多个角色，角色单链�
 - 可插拔 `Store`；内置 `MemoryStore` 为参考实现。
 - `net/http` 中间件：`Require` / `RequireAll` / `RequireAny` / `RequireRole`。
 - 令牌：`jwt`（HS256 / Ed25519，标准库）、`branca`（XChaCha20-Poly1305）。
+- TOTP：`totp`（RFC 6238），密钥以 AES-256-GCM 加密存储。
 - 核心零三方依赖，并发安全；命中路径一次 map 查找、零分配。
 
 ## 快速开始

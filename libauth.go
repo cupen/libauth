@@ -1,7 +1,9 @@
-// Package libauth implements a multi-role permission system (RBAC).
+// Package libauth provides authentication and authorization for Go: RBAC
+// permissions and net/http middleware, plus JWT, Branca and TOTP in
+// subpackages.
 //
-// All public identifiers are re-exported here; the implementation lives in
-// model, store, middleware, authz, jwt and branca.
+// The RBAC and middleware APIs are re-exported here; implementations live in
+// model, store, middleware and authz.
 package libauth
 
 import (

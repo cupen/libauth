@@ -2,7 +2,7 @@ English | [简体中文](README-zh.md)
 
 # libauth
 
-Multi-role access control for Go. A user holds several roles, a role inherits from one parent, and permissions are `resource:action` strings with wildcards. Zero-dependency core, pluggable `Store`, `net/http` middleware, plus JWT and Branca tokens.
+Authentication and authorization for Go: RBAC permissions (multi-role users, single-parent inheritance, wildcard `resource:action`), plus `net/http` middleware, JWT/Branca tokens and TOTP. Zero-dependency core, pluggable `Store`.
 
 ## Features
 
@@ -10,6 +10,7 @@ Multi-role access control for Go. A user holds several roles, a role inherits fr
 - Pluggable `Store`; `MemoryStore` is the reference implementation.
 - `net/http` middleware: `Require` / `RequireAll` / `RequireAny` / `RequireRole`.
 - Tokens: `jwt` (HS256 / Ed25519, stdlib) and `branca` (XChaCha20-Poly1305).
+- TOTP: `totp` (RFC 6238) with AES-256-GCM sealed secrets.
 - Zero third-party dependencies; safe for concurrent use; a warm `Check` is one map lookup with no allocations.
 
 ## Quick start
