@@ -7,7 +7,6 @@ English | [简体中文](README-zh.md)
 ## Features
 
 - Multiple roles per user, single-parent inheritance, wildcard permissions (`article:*` / `*`) and direct grants.
-- Built-in `read` / `write` / `exec` action constants; any custom action string works too.
 - Pluggable `Store` interface; the bundled `MemoryStore` is the reference implementation.
 - HTTP middleware `Require` / `RequireAll` / `RequireAny` / `RequireRole` that injects the resolved user into the `context`.
 - Two token formats: `jwt` (HS256 / Ed25519, stdlib only) and `branca` (XChaCha20-Poly1305, encrypted, no plaintext).
@@ -37,14 +36,14 @@ m.Check("bob", libauth.Permission{"article", "publish"})  // nil
 
 ## Permission format
 
-A `Permission` is a `resource:action` string; the number of segments is open-ended (e.g. `tenant:article:read`). `libauth.ActionRead`, `libauth.ActionWrite` and `libauth.ActionExec` mean read, write and execute respectively; they are string constants, not a closed enum. Custom actions need no registration:
+A `Permission` is a `resource:action` string; the number of segments is open-ended (e.g. `tenant:article:read`). Common actions are just plain strings — `read`, `write`, `exec`, or any custom name, no registration needed:
 
 ```go
-read := libauth.Permission{Resource: "article", Action: libauth.ActionRead}
+read := libauth.Permission{Resource: "article", Action: "read"}
 publish := libauth.Permission{Resource: "article", Action: "publish"} // custom action
 ```
 
-The three built-in actions are independent: `write` does not imply `read`, and `exec` implies neither. Built-in and custom actions follow the same exact-match and wildcard rules:
+Actions are independent: `write` does not imply `read`, and `exec` implies neither. All actions follow the same exact-match and wildcard rules:
 
 | Granted (pattern) | Checked (actual) | Result |
 |---|---|---|

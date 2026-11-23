@@ -38,37 +38,6 @@ func Example() {
 	// libauth: user "bob" lacks permission "article:delete" (roles: [editor viewer])
 }
 
-// Built-in actions are string constants; custom action names need no
-// registration and follow the same matching rules.
-func Example_builtInActions() {
-	e := libauth.New()
-
-	_ = e.CreateRole("operator", []libauth.Permission{
-		{Resource: "article", Action: libauth.ActionRead},
-		{Resource: "article", Action: libauth.ActionWrite},
-		{Resource: "job", Action: libauth.ActionExec},
-		{Resource: "article", Action: "publish"}, // custom action
-	}, "")
-	_ = e.CreateUser("bob", "operator")
-
-	for _, p := range []libauth.Permission{
-		{Resource: "article", Action: libauth.ActionRead},
-		{Resource: "article", Action: libauth.ActionWrite},
-		{Resource: "job", Action: libauth.ActionExec},
-		{Resource: "article", Action: "publish"},
-	} {
-		fmt.Println(e.Check("bob", p))
-	}
-	fmt.Println(e.Check("bob", libauth.Permission{Resource: "article", Action: "delete"}))
-
-	// Output:
-	// <nil>
-	// <nil>
-	// <nil>
-	// <nil>
-	// libauth: user "bob" lacks permission "article:delete" (roles: [operator])
-}
-
 // Roles may inherit from parent roles; permissions flow down the chain.
 func ExampleEnforcer_RolesFor() {
 	e := libauth.New()

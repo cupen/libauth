@@ -26,7 +26,7 @@ func TestCacheSizeAliases(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			e := libauth.New(tc.opt)
 			if err := e.CreateRole("viewer", []libauth.Permission{
-				{Resource: "article", Action: libauth.ActionRead},
+				{Resource: "article", Action: "read"},
 			}, ""); err != nil {
 				t.Fatal(err)
 			}
@@ -35,7 +35,7 @@ func TestCacheSizeAliases(t *testing.T) {
 					t.Fatal(err)
 				}
 				if err := e.Check(id, libauth.Permission{
-					Resource: "article", Action: libauth.ActionRead,
+					Resource: "article", Action: "read",
 				}); err != nil {
 					t.Fatal(err)
 				}

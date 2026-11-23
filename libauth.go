@@ -20,12 +20,6 @@ type (
 	Role       = model.Role
 )
 
-const (
-	ActionRead  = model.ActionRead
-	ActionWrite = model.ActionWrite
-	ActionExec  = model.ActionExec
-)
-
 func ParsePermission(s string) (Permission, error) { return model.ParsePermission(s) }
 
 type (

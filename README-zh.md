@@ -7,7 +7,6 @@
 ## 特性
 
 - 多角色 + 单链继承 + 通配符权限（`article:*` / `*`）+ 直接授权。
-- 内置 `read`（查看）/ `write`（编辑）/ `exec`（执行）操作常量，同时支持任意自定义操作字符串。
 - 可插拔 `Store` 接口；内置 `MemoryStore` 是参考实现。
 - HTTP 中间件 `Require` / `RequireAll` / `RequireAny` / `RequireRole`，通过后把用户注入 `context`。
 - 两种令牌：`jwt`（HS256 / Ed25519，纯标准库）、`branca`（XChaCha20-Poly1305，强加密，无铭文）
@@ -37,14 +36,14 @@ m.Check("bob", libauth.Permission{"article", "publish"})  // nil
 
 ## 权限格式
 
-`Permission` 是 `资源:操作` 字符串，段数可扩展（如 `tenant:article:read`）。内置 `libauth.ActionRead`、`libauth.ActionWrite`、`libauth.ActionExec` 分别表示查看、编辑、执行；它们是字符串常量，不是封闭枚举。自定义操作直接使用字符串即可，无需注册：
+`Permission` 是 `资源:操作` 字符串，段数可扩展（如 `tenant:article:read`）。常用操作直接写字面量即可——`read`、`write`、`exec`，或任意自定义名称，无需注册：
 
 ```go
-read := libauth.Permission{Resource: "article", Action: libauth.ActionRead}
+read := libauth.Permission{Resource: "article", Action: "read"}
 publish := libauth.Permission{Resource: "article", Action: "publish"} // 自定义操作
 ```
 
-三种内置操作相互独立：`write` 不隐含 `read`，`exec` 也不隐含其他权限，需要分别授权。内置与自定义操作遵循相同的精确匹配和通配符规则：
+各操作相互独立：`write` 不隐含 `read`，`exec` 也不隐含其他权限，需要分别授权。所有操作遵循相同的精确匹配和通配符规则：
 
 | 已授予（模式） | 检查（实际） | 结果 |
 |---|---|---|

@@ -7,13 +7,6 @@ import (
 	"strings"
 )
 
-// Built-in action names. Any other string is also a valid action.
-const (
-	ActionRead  = "read"
-	ActionWrite = "write"
-	ActionExec  = "exec"
-)
-
 // Permission is a {Resource, Action} pair; either field may be "*" as a
 // wildcard, and {Resource: "*"} alone grants everything.
 type Permission struct {

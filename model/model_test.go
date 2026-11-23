@@ -2,31 +2,6 @@ package model
 
 import "testing"
 
-func TestBuiltInActions(t *testing.T) {
-	actions := []struct {
-		got  string
-		want string
-	}{
-		{ActionRead, "read"},
-		{ActionWrite, "write"},
-		{ActionExec, "exec"},
-	}
-	for _, tc := range actions {
-		if tc.got != tc.want {
-			t.Errorf("built-in action = %q, want %q", tc.got, tc.want)
-		}
-		granted := Permission{Resource: "article", Action: tc.got}
-		if !granted.Valid() || !granted.Matches(granted) {
-			t.Errorf("built-in permission %+v should be valid and match itself", granted)
-		}
-		for _, other := range actions {
-			if other.want != tc.want && granted.Matches(Permission{Resource: "article", Action: other.got}) {
-				t.Errorf("%q must not imply %q", tc.got, other.got)
-			}
-		}
-	}
-}
-
 func TestParsePermission(t *testing.T) {
 	cases := map[string]Permission{
 		"article:create": {Resource: "article", Action: "create"},
