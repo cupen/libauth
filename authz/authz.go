@@ -91,7 +91,7 @@ func (g *grantedSet) flatten() []model.Permission {
 	out := make([]model.Permission, 0, len(g.byResource)*2)
 	for r, actions := range g.byResource {
 		for a := range actions {
-			out = append(out, model.Permission{Resource: r, Action: a})
+			out = append(out, model.Perm(r, a))
 		}
 	}
 	return out

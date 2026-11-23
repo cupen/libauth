@@ -129,12 +129,12 @@ func main() {
 	}
 	m := libauth.New(libauth.WithStore(store))
 	must(m.CreateRole("editor", []libauth.Permission{
-		{Resource: "article", Action: "create"},
-		{Resource: "article", Action: "read"},
+		libauth.Perm("article", "create"),
+		libauth.Perm("article", "read"),
 	}, ""))
 	must(m.CreateRole("viewer", []libauth.Permission{
-		{Resource: "article", Action: "read"},
-		{Resource: "whoami", Action: "read"},
+		libauth.Perm("article", "read"),
+		libauth.Perm("whoami", "read"),
 	}, ""))
 	must(m.CreateUser("bob", "editor", "viewer"))
 
@@ -154,8 +154,8 @@ func main() {
 		fmt.Printf("  user %-8s roles=%v\n", u.ID, u.Roles)
 	}
 
-	bobOK := libauth.Permission{Resource: "article", Action: "create"}
-	daveOK := libauth.Permission{Resource: "article", Action: "read"}
+	bobOK := libauth.Perm("article", "create")
+	daveOK := libauth.Perm("article", "read")
 	fmt.Println("\nbob may still create articles:", m2.Check("bob", bobOK) == nil)
 	fmt.Println("dave is unknown after reload:", m2.Check("dave", daveOK))
 }

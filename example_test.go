@@ -9,28 +9,20 @@ import (
 	"github.com/cupen/libauth"
 )
 
-func perm(s string) libauth.Permission {
-	p, err := libauth.ParsePermission(s)
-	if err != nil {
-		panic(err)
-	}
-	return p
-}
-
 // A user may hold several roles at once; effective permissions are the
 // union of every role's permissions.
 func Example() {
 	e := libauth.New()
 
 	_ = e.CreateRole("editor", []libauth.Permission{
-		perm("article:create"), perm("article:edit"), perm("article:read"),
+		libauth.Perm("article", "create"), libauth.Perm("article", "edit"), libauth.Perm("article", "read"),
 	}, "")
-	_ = e.CreateRole("viewer", []libauth.Permission{perm("article:read")}, "")
+	_ = e.CreateRole("viewer", []libauth.Permission{libauth.Perm("article", "read")}, "")
 	_ = e.CreateUser("bob", "editor", "viewer")
 
-	fmt.Println(e.Check("bob", perm("article:create")))
-	fmt.Println(e.Check("bob", perm("article:read")))
-	fmt.Println(e.Check("bob", perm("article:delete")))
+	fmt.Println(e.Check("bob", libauth.Perm("article", "create")))
+	fmt.Println(e.Check("bob", libauth.Perm("article", "read")))
+	fmt.Println(e.Check("bob", libauth.Perm("article", "delete")))
 
 	// Output:
 	// <nil>
@@ -42,16 +34,16 @@ func Example() {
 func ExampleEnforcer_RolesFor() {
 	e := libauth.New()
 
-	_ = e.CreateRole("editor", []libauth.Permission{perm("article:create"), perm("article:read")}, "")
-	_ = e.CreateRole("publisher", []libauth.Permission{perm("article:publish")}, "editor")
+	_ = e.CreateRole("editor", []libauth.Permission{libauth.Perm("article", "create"), libauth.Perm("article", "read")}, "")
+	_ = e.CreateRole("publisher", []libauth.Permission{libauth.Perm("article", "publish")}, "editor")
 	_ = e.CreateUser("dave", "publisher")
 
 	roles, _ := e.RolesFor("dave")
 	fmt.Println(roles)
 
-	fmt.Println(e.Check("dave", perm("article:publish")))
-	fmt.Println(e.Check("dave", perm("article:create")))
-	fmt.Println(e.Check("dave", perm("article:delete")))
+	fmt.Println(e.Check("dave", libauth.Perm("article", "publish")))
+	fmt.Println(e.Check("dave", libauth.Perm("article", "create")))
+	fmt.Println(e.Check("dave", libauth.Perm("article", "delete")))
 
 	// Output:
 	// [editor publisher]
@@ -60,13 +52,13 @@ func ExampleEnforcer_RolesFor() {
 	// libauth: user "dave" lacks permission "article:delete" (roles: [editor publisher])
 }
 
-// Permissions are {Resource, Action} structs; either field may be "*" for a
+// Permissions are resource/action pairs; either side may be "*" for a
 // wildcard match.
 func Example_wildcards() {
 	e := libauth.New()
 
-	_ = e.CreateRole("admin", []libauth.Permission{perm("*")}, "")
-	_ = e.CreateRole("article-admin", []libauth.Permission{perm("article:*")}, "")
+	_ = e.CreateRole("admin", []libauth.Permission{libauth.Perm("*", "")}, "")
+	_ = e.CreateRole("article-admin", []libauth.Permission{libauth.Perm("article", "*")}, "")
 	_ = e.CreateUser("alice", "admin")
 	_ = e.CreateUser("oak", "article-admin")
 
@@ -74,9 +66,9 @@ func Example_wildcards() {
 		user string
 		perm libauth.Permission
 	}{
-		{"alice", perm("user:delete")},
-		{"oak", perm("article:delete")},
-		{"oak", perm("user:delete")},
+		{"alice", libauth.Perm("user", "delete")},
+		{"oak", libauth.Perm("article", "delete")},
+		{"oak", libauth.Perm("user", "delete")},
 	} {
 		ok, _ := e.HasPermission(c.user, c.perm)
 		fmt.Println(ok)
@@ -93,17 +85,17 @@ func Example_wildcards() {
 func ExampleEnforcer_AssignRole() {
 	e := libauth.New()
 
-	_ = e.CreateRole("viewer", []libauth.Permission{perm("article:read")}, "")
-	_ = e.CreateRole("editor", []libauth.Permission{perm("article:create"), perm("article:read")}, "")
+	_ = e.CreateRole("viewer", []libauth.Permission{libauth.Perm("article", "read")}, "")
+	_ = e.CreateRole("editor", []libauth.Permission{libauth.Perm("article", "create"), libauth.Perm("article", "read")}, "")
 	_ = e.CreateUser("carol", "viewer")
 
-	fmt.Println(e.Check("carol", perm("article:create")))
+	fmt.Println(e.Check("carol", libauth.Perm("article", "create")))
 
 	_ = e.AssignRole("carol", "editor")
-	fmt.Println(e.Check("carol", perm("article:create")))
+	fmt.Println(e.Check("carol", libauth.Perm("article", "create")))
 
 	_ = e.RevokeRole("carol", "editor")
-	fmt.Println(e.Check("carol", perm("article:create")))
+	fmt.Println(e.Check("carol", libauth.Perm("article", "create")))
 
 	// Output:
 	// libauth: user "carol" lacks permission "article:create" (roles: [viewer])
@@ -115,14 +107,14 @@ func ExampleEnforcer_AssignRole() {
 func ExampleEnforcer_GrantDirectPermission() {
 	e := libauth.New()
 
-	_ = e.CreateRole("viewer", []libauth.Permission{perm("article:read")}, "")
+	_ = e.CreateRole("viewer", []libauth.Permission{libauth.Perm("article", "read")}, "")
 	_ = e.CreateUser("carol", "viewer")
 
-	_ = e.GrantDirectPermission("carol", perm("article:comment"))
-	fmt.Println(e.Check("carol", perm("article:comment")))
+	_ = e.GrantDirectPermission("carol", libauth.Perm("article", "comment"))
+	fmt.Println(e.Check("carol", libauth.Perm("article", "comment")))
 
-	_ = e.RevokeDirectPermission("carol", perm("article:comment"))
-	fmt.Println(e.Check("carol", perm("article:comment")))
+	_ = e.RevokeDirectPermission("carol", libauth.Perm("article", "comment"))
+	fmt.Println(e.Check("carol", libauth.Perm("article", "comment")))
 
 	// Output:
 	// <nil>
@@ -135,11 +127,11 @@ func ExampleEnforcer_PermissionsFor() {
 	e := libauth.New()
 
 	_ = e.CreateRole("editor", []libauth.Permission{
-		perm("article:create"), perm("article:edit"), perm("article:read"), perm("whoami:read"),
+		libauth.Perm("article", "create"), libauth.Perm("article", "edit"), libauth.Perm("article", "read"), libauth.Perm("whoami", "read"),
 	}, "")
-	_ = e.CreateRole("viewer", []libauth.Permission{perm("article:read"), perm("whoami:read")}, "")
+	_ = e.CreateRole("viewer", []libauth.Permission{libauth.Perm("article", "read"), libauth.Perm("whoami", "read")}, "")
 	_ = e.CreateUser("bob", "editor", "viewer")
-	_ = e.GrantDirectPermission("bob", perm("article:comment"))
+	_ = e.GrantDirectPermission("bob", libauth.Perm("article", "comment"))
 
 	perms, _ := e.PermissionsFor("bob")
 	fmt.Println(perms)
@@ -152,18 +144,18 @@ func ExampleEnforcer_PermissionsFor() {
 func ExampleEnforcer_Check() {
 	e := libauth.New()
 
-	_ = e.CreateRole("viewer", []libauth.Permission{perm("article:read")}, "")
+	_ = e.CreateRole("viewer", []libauth.Permission{libauth.Perm("article", "read")}, "")
 	_ = e.CreateUser("carol", "viewer")
 
-	fmt.Println(e.Check("carol", perm("article:read")))
+	fmt.Println(e.Check("carol", libauth.Perm("article", "read")))
 
-	err := e.Check("carol", perm("article:delete"))
+	err := e.Check("carol", libauth.Perm("article", "delete"))
 	var denied *libauth.PermissionDeniedError
 	if errors.As(err, &denied) {
 		fmt.Println("denied for:", denied.Required, "roles:", denied.Roles)
 	}
 
-	fmt.Println(e.Check("ghost", perm("article:read")))
+	fmt.Println(e.Check("ghost", libauth.Perm("article", "read")))
 
 	// Output:
 	// <nil>
@@ -176,12 +168,12 @@ func ExampleEnforcer_Check() {
 func ExampleNewMiddleware() {
 	e := libauth.New()
 
-	_ = e.CreateRole("editor", []libauth.Permission{perm("article:create"), perm("article:read")}, "")
+	_ = e.CreateRole("editor", []libauth.Permission{libauth.Perm("article", "create"), libauth.Perm("article", "read")}, "")
 	_ = e.CreateUser("bob", "editor")
 
 	mw, _ := libauth.NewMiddleware(e, libauth.HeaderIdentity(""))
 
-	create := mw.Require(perm("article:create"))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	create := mw.Require(libauth.Perm("article", "create"))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u := libauth.UserFromContext(r.Context())
 		fmt.Fprintf(w, "article created by %s", u.ID)
 	}))

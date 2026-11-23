@@ -15,18 +15,18 @@ func main() {
 	m := libauth.New()
 
 	must(m.CreateRole("viewer", []libauth.Permission{
-		libauth.Permission{Resource: "article", Action: "read"},
-		libauth.Permission{Resource: "whoami", Action: "read"},
+		libauth.Perm("article", "read"),
+		libauth.Perm("whoami", "read"),
 	}, ""))
 	must(m.CreateRole("editor", []libauth.Permission{
-		{Resource: "article", Action: "create"},
-		{Resource: "article", Action: "edit"},
-		{Resource: "article", Action: "read"},
-		{Resource: "whoami", Action: "read"},
+		libauth.Perm("article", "create"),
+		libauth.Perm("article", "edit"),
+		libauth.Perm("article", "read"),
+		libauth.Perm("whoami", "read"),
 	}, ""))
 	must(m.CreateRole("publisher",
-		[]libauth.Permission{{Resource: "article", Action: "publish"}}, "editor"))
-	must(m.CreateRole("admin", []libauth.Permission{{Resource: "*"}}, ""))
+		[]libauth.Permission{libauth.Perm("article", "publish")}, "editor"))
+	must(m.CreateRole("admin", []libauth.Permission{libauth.Perm("*", "")}, ""))
 
 	must(m.CreateUser("carol", "viewer"))
 	must(m.CreateUser("bob", "editor", "viewer"))
@@ -44,13 +44,13 @@ func main() {
 		user string
 		perm libauth.Permission
 	}{
-		{"carol", libauth.Permission{Resource: "article", Action: "read"}},
-		{"carol", libauth.Permission{Resource: "article", Action: "create"}},
-		{"bob", libauth.Permission{Resource: "article", Action: "create"}},
-		{"bob", libauth.Permission{Resource: "article", Action: "delete"}},
-		{"dave", libauth.Permission{Resource: "article", Action: "publish"}},
-		{"dave", libauth.Permission{Resource: "article", Action: "edit"}}, // inherited from editor
-		{"alice", libauth.Permission{Resource: "user", Action: "delete"}}, // via the "*" wildcard
+		{"carol", libauth.Perm("article", "read")},
+		{"carol", libauth.Perm("article", "create")},
+		{"bob", libauth.Perm("article", "create")},
+		{"bob", libauth.Perm("article", "delete")},
+		{"dave", libauth.Perm("article", "publish")},
+		{"dave", libauth.Perm("article", "edit")}, // inherited from editor
+		{"alice", libauth.Perm("user", "delete")}, // via the "*" wildcard
 	} {
 		verdict(m, c.user, c.perm)
 	}
@@ -58,16 +58,16 @@ func main() {
 	fmt.Println("\n== runtime changes ==")
 
 	must(m.AssignRole("carol", "editor"))
-	verdict(m, "carol", libauth.Permission{Resource: "article", Action: "create"})
+	verdict(m, "carol", libauth.Perm("article", "create"))
 
-	must(m.GrantPermission("viewer", libauth.Permission{Resource: "article", Action: "comment"}))
-	verdict(m, "carol", libauth.Permission{Resource: "article", Action: "comment"})
+	must(m.GrantPermission("viewer", libauth.Perm("article", "comment")))
+	verdict(m, "carol", libauth.Perm("article", "comment"))
 
-	must(m.GrantDirectPermission("carol", libauth.Permission{Resource: "article", Action: "archive"}))
-	verdict(m, "carol", libauth.Permission{Resource: "article", Action: "archive"})
+	must(m.GrantDirectPermission("carol", libauth.Perm("article", "archive")))
+	verdict(m, "carol", libauth.Perm("article", "archive"))
 
 	must(m.RevokeRole("carol", "editor"))
-	verdict(m, "carol", libauth.Permission{Resource: "article", Action: "create"})
+	verdict(m, "carol", libauth.Perm("article", "create"))
 
 	fmt.Println("\n== carol's effective permissions ==")
 	perms, _ := m.PermissionsFor("carol")

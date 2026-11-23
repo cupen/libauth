@@ -14,6 +14,11 @@ type Permission struct {
 	Action   string `json:"action"`
 }
 
+// Perm builds a {Resource, Action} pair.
+func Perm(resource, action string) Permission {
+	return Permission{Resource: resource, Action: action}
+}
+
 // ParsePermission parses "resource:action" — "*" parses as {Resource: "*"}.
 func ParsePermission(s string) (Permission, error) {
 	if s == "" {

@@ -2,6 +2,13 @@ package model
 
 import "testing"
 
+func TestPerm(t *testing.T) {
+	want := Permission{Resource: "article", Action: "read"}
+	if got := Perm("article", "read"); got != want {
+		t.Errorf("Perm = %+v, want %+v", got, want)
+	}
+}
+
 func TestParsePermission(t *testing.T) {
 	cases := map[string]Permission{
 		"article:create": {Resource: "article", Action: "create"},

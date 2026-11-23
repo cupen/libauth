@@ -20,6 +20,8 @@ type (
 	Role       = model.Role
 )
 
+func Perm(resource, action string) Permission { return model.Perm(resource, action) }
+
 func ParsePermission(s string) (Permission, error) { return model.ParsePermission(s) }
 
 type (

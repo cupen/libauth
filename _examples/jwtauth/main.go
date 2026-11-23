@@ -48,9 +48,9 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("POST /login", loginHandler(m, auth))
-	mux.Handle("GET /whoami", mw.Require(perm("whoami:read"))(http.HandlerFunc(whoami)))
-	mux.Handle("GET /articles", mw.Require(perm("article:read"))(http.HandlerFunc(listArticles)))
-	mux.Handle("POST /articles", mw.Require(perm("article:create"))(http.HandlerFunc(createArticle)))
+	mux.Handle("GET /whoami", mw.Require(libauth.Perm("whoami", "read"))(http.HandlerFunc(whoami)))
+	mux.Handle("GET /articles", mw.Require(libauth.Perm("article", "read"))(http.HandlerFunc(listArticles)))
+	mux.Handle("POST /articles", mw.Require(libauth.Perm("article", "create"))(http.HandlerFunc(createArticle)))
 
 	log.Printf("listening on http://%s (identify via Authorization: Bearer <token>)", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
@@ -152,16 +152,16 @@ func seed() *libauth.Enforcer {
 		permissions []libauth.Permission
 		parent      libauth.RoleID
 	}{
-		{"admin", []libauth.Permission{{Resource: "*"}}, ""},
+		{"admin", []libauth.Permission{libauth.Perm("*", "")}, ""},
 		{"editor", []libauth.Permission{
-			{Resource: "article", Action: "create"},
-			{Resource: "article", Action: "edit"},
-			{Resource: "article", Action: "read"},
-			{Resource: "whoami", Action: "read"},
+			libauth.Perm("article", "create"),
+			libauth.Perm("article", "edit"),
+			libauth.Perm("article", "read"),
+			libauth.Perm("whoami", "read"),
 		}, ""},
 		{"viewer", []libauth.Permission{
-			{Resource: "article", Action: "read"},
-			{Resource: "whoami", Action: "read"},
+			libauth.Perm("article", "read"),
+			libauth.Perm("whoami", "read"),
 		}, ""},
 	} {
 		if err := m.CreateRole(r.name, r.permissions, r.parent); err != nil {
@@ -179,14 +179,6 @@ func seed() *libauth.Enforcer {
 		}
 	}
 	return m
-}
-
-func perm(s string) libauth.Permission {
-	p, err := libauth.ParsePermission(s)
-	if err != nil {
-		panic(err)
-	}
-	return p
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -26,17 +26,17 @@ m.CreateRole("admin",     []libauth.Permission{{"*", ""}}, "")                  
 m.CreateUser("bob", "editor", "viewer")
 m.CreateUser("alice", "admin")
 
-m.Check("bob",   libauth.Permission{"article", "create"}) // nil
-m.Check("bob",   libauth.Permission{"article", "delete"}) // ErrPermissionDenied
-m.Check("alice", libauth.Permission{"article", "delete"}) // nil
+m.Check("bob",   libauth.Perm("article", "create")) // nil
+m.Check("bob",   libauth.Perm("article", "delete")) // ErrPermissionDenied
+m.Check("alice", libauth.Perm("article", "delete")) // nil
 
 m.AssignRole("bob", "publisher")
-m.Check("bob", libauth.Permission{"article", "publish"})  // nil
+m.Check("bob", libauth.Perm("article", "publish"))  // nil
 ```
 
 ## Permissions
 
-`resource:action`; segments are open-ended (`tenant:article:read`). Actions are plain strings (`read`, `write`, `exec`, or anything else) and imply nothing: `write` does not grant `read`.
+`resource:action`; segments are open-ended (`tenant:article:read`). Actions are plain strings (`read`, `write`, `exec`, or anything else) and imply nothing: `write` does not grant `read`. Build one with `libauth.Perm("article", "read")`, or parse a string with `ParsePermission("article:read")`.
 
 | Granted | Checked | Result |
 |---|---|---|
@@ -70,8 +70,8 @@ Reads run concurrently; writes are serialized and visible once they return. The 
 mw, _ := libauth.NewMiddleware(m, libauth.HeaderIdentity("")) // reads X-User-ID
 
 mux := http.NewServeMux()
-mux.Handle("POST /articles", mw.Require(libauth.Permission{"article", "create"})(create))
-mux.Handle("POST /publish",  mw.RequireAll(libauth.Permission{"article", "edit"}, libauth.Permission{"article", "publish"})(publish))
+mux.Handle("POST /articles", mw.Require(libauth.Perm("article", "create"))(create))
+mux.Handle("POST /publish",  mw.RequireAll(libauth.Perm("article", "edit"), libauth.Perm("article", "publish"))(publish))
 mux.Handle("GET /audit",     mw.RequireRole("admin")(audit))
 ```
 

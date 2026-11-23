@@ -26,17 +26,17 @@ m.CreateRole("admin",     []libauth.Permission{{"*", ""}}, "")                  
 m.CreateUser("bob", "editor", "viewer")
 m.CreateUser("alice", "admin")
 
-m.Check("bob",   libauth.Permission{"article", "create"}) // nil
-m.Check("bob",   libauth.Permission{"article", "delete"}) // ErrPermissionDenied
-m.Check("alice", libauth.Permission{"article", "delete"}) // nil
+m.Check("bob",   libauth.Perm("article", "create")) // nil
+m.Check("bob",   libauth.Perm("article", "delete")) // ErrPermissionDenied
+m.Check("alice", libauth.Perm("article", "delete")) // nil
 
 m.AssignRole("bob", "publisher")
-m.Check("bob", libauth.Permission{"article", "publish"})  // nil
+m.Check("bob", libauth.Perm("article", "publish"))  // nil
 ```
 
 ## 权限
 
-`资源:操作`，段数可扩展（`tenant:article:read`）。操作是普通字符串（`read`、`write`、`exec` 或任意名称），彼此独立：`write` 不隐含 `read`。
+`资源:操作`，段数可扩展（`tenant:article:read`）。操作是普通字符串（`read`、`write`、`exec` 或任意名称），彼此独立：`write` 不隐含 `read`。用 `libauth.Perm("article", "read")` 构造，或用 `ParsePermission("article:read")` 解析字符串。
 
 | 已授予 | 检查 | 结果 |
 |---|---|---|
@@ -70,8 +70,8 @@ m.Check("bob", libauth.Permission{"article", "publish"})  // nil
 mw, _ := libauth.NewMiddleware(m, libauth.HeaderIdentity("")) // 读 X-User-ID
 
 mux := http.NewServeMux()
-mux.Handle("POST /articles", mw.Require(libauth.Permission{"article", "create"})(create))
-mux.Handle("POST /publish",  mw.RequireAll(libauth.Permission{"article", "edit"}, libauth.Permission{"article", "publish"})(publish))
+mux.Handle("POST /articles", mw.Require(libauth.Perm("article", "create"))(create))
+mux.Handle("POST /publish",  mw.RequireAll(libauth.Perm("article", "edit"), libauth.Perm("article", "publish"))(publish))
 mux.Handle("GET /audit",     mw.RequireRole("admin")(audit))
 ```
 

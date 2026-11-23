@@ -37,10 +37,10 @@ func main() {
 	s := &server{articles: map[int]article{}, nextID: 1}
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /whoami", mw.Require(libauth.Permission{Resource: "whoami", Action: "read"})(http.HandlerFunc(s.whoami)))
-	mux.Handle("GET /articles", mw.Require(libauth.Permission{Resource: "article", Action: "read"})(http.HandlerFunc(s.list)))
-	mux.Handle("POST /articles", mw.Require(libauth.Permission{Resource: "article", Action: "create"})(http.HandlerFunc(s.create)))
-	mux.Handle("DELETE /articles/{id}", mw.Require(libauth.Permission{Resource: "article", Action: "delete"})(http.HandlerFunc(s.remove)))
+	mux.Handle("GET /whoami", mw.Require(libauth.Perm("whoami", "read"))(http.HandlerFunc(s.whoami)))
+	mux.Handle("GET /articles", mw.Require(libauth.Perm("article", "read"))(http.HandlerFunc(s.list)))
+	mux.Handle("POST /articles", mw.Require(libauth.Perm("article", "create"))(http.HandlerFunc(s.create)))
+	mux.Handle("DELETE /articles/{id}", mw.Require(libauth.Perm("article", "delete"))(http.HandlerFunc(s.remove)))
 
 	log.Printf("listening on http://localhost:8080 (identify via X-User-ID header)")
 	log.Fatal(http.ListenAndServe("localhost:8080", mux))
@@ -54,19 +54,19 @@ func seed() *libauth.Enforcer {
 		permissions []libauth.Permission
 		parent      libauth.RoleID
 	}{
-		{"admin", []libauth.Permission{{Resource: "*"}}, ""},
+		{"admin", []libauth.Permission{libauth.Perm("*", "")}, ""},
 		{"editor", []libauth.Permission{
-			{Resource: "article", Action: "create"},
-			{Resource: "article", Action: "edit"},
-			{Resource: "article", Action: "read"},
-			{Resource: "whoami", Action: "read"},
+			libauth.Perm("article", "create"),
+			libauth.Perm("article", "edit"),
+			libauth.Perm("article", "read"),
+			libauth.Perm("whoami", "read"),
 		}, ""},
 		{"viewer", []libauth.Permission{
-			{Resource: "article", Action: "read"},
-			{Resource: "whoami", Action: "read"},
+			libauth.Perm("article", "read"),
+			libauth.Perm("whoami", "read"),
 		}, ""},
 		{"publisher", []libauth.Permission{
-			{Resource: "article", Action: "publish"},
+			libauth.Perm("article", "publish"),
 		}, "editor"},
 	} {
 		if err := m.CreateRole(r.name, r.permissions, r.parent); err != nil {
