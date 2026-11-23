@@ -1,9 +1,6 @@
-// Package middleware provides net/http adapters for libauth: guards that
-// identify the caller, run permission or role checks and inject the resolved
-// user into the request context.
-//
-// Every guard works against the Authorizer interface; *libauth.Enforcer
-// satisfies it out of the box.
+// Package middleware provides net/http guards that identify the caller, run
+// permission or role checks and inject the resolved user into the request
+// context.
 package middleware
 
 import (
@@ -16,13 +13,8 @@ import (
 )
 
 var (
-	// ErrNilAuthorizer rejects middleware construction without an
-	// authorizer to consult.
 	ErrNilAuthorizer = errors.New("libauth: authorizer is required")
-	// ErrNilIdentityFunc rejects middleware construction without an
-	// explicit identity source. There is no silent default: wiring the
-	// identity (HeaderIdentity, a bearer-token parser, ...) is a decision
-	// the caller must make on purpose.
+	// There is deliberately no default identity: wiring one is a decision.
 	ErrNilIdentityFunc = errors.New("libauth: identity func is required")
 )
 
@@ -34,8 +26,8 @@ type Authorizer interface {
 	GetUser(id model.UserID) (*model.User, error)
 }
 
-// ErrorHandler fully renders an error response. status is the suggested
-// HTTP status code (401, 403 or 500).
+// ErrorHandler renders an error response; status is a suggested 401, 403 or
+// 500.
 type ErrorHandler func(w http.ResponseWriter, r *http.Request, status int, err error)
 
 type Middleware struct {
@@ -47,15 +39,13 @@ type Middleware struct {
 // Option customises a Middleware.
 type Option func(*Middleware)
 
-// WithOnError replaces the default JSON error response with a custom
-// renderer (e.g. plain-text or an HTML page).
+// WithOnError replaces the default JSON error response.
 func WithOnError(h ErrorHandler) Option {
 	return func(mw *Middleware) { mw.onError = h }
 }
 
 // NewMiddleware builds middleware for the authorizer. identity must be
-// non-nil — HeaderIdentity("") is the demo identity; production wires a
-// real one (see _examples/jwtauth).
+// non-nil.
 func NewMiddleware(m Authorizer, identity IdentityFunc, opts ...Option) (*Middleware, error) {
 	if m == nil {
 		return nil, ErrNilAuthorizer

@@ -6,8 +6,8 @@ import (
 	"github.com/cupen/libauth/model"
 )
 
-// HasRole reports whether the user holds the role directly (inheritance
-// is not followed — see RolesFor for the effective chain).
+// HasRole reports whether the user holds the role directly; inheritance is
+// not followed.
 func (e *Enforcer) HasRole(id model.UserID, role model.RoleID) (bool, error) {
 	set, err := e.directRolesOf(id)
 	if err != nil {
@@ -25,13 +25,9 @@ func (e *Enforcer) HasPermission(id model.UserID, required model.Permission) (bo
 	return set.has(required), nil
 }
 
-// Check returns nil when access is granted. On denial it returns a
-// *model.PermissionDeniedError matchable via errors.Is with
-// model.ErrPermissionDenied.
-//
-// The allow path is the hot one: a warm check is a few map lookups and
-// never touches the store. The store is read once more only to populate
-// the denial error's context.
+// Check returns nil when access is granted, otherwise a
+// *model.PermissionDeniedError matchable with model.ErrPermissionDenied.
+// The allow path never touches the store.
 func (e *Enforcer) Check(id model.UserID, required model.Permission) error {
 	set, err := e.getGrantedSet(id)
 	if err != nil {

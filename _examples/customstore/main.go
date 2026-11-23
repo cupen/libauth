@@ -1,9 +1,5 @@
-// Command customstore shows how to plug a custom persistence layer into
-// libauth by implementing the Store interface. The RBAC world is written to
-// a JSON file by one enforcer and reloaded by a second, independent one.
-//
-// The Store contract is just whole-object CRUD — relationship mutations
-// are handled by authz.Enforcer.
+// Command customstore plugs a JSON-file persistence layer into libauth by
+// implementing the Store interface.
 //
 //	go run ./_examples/customstore
 package main

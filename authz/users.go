@@ -14,8 +14,8 @@ func (e *Enforcer) CreateUser(id model.UserID, roles ...model.RoleID) error {
 	if err := e.store.CreateUser(&model.User{ID: id, Roles: append([]model.RoleID(nil), roles...)}); err != nil {
 		return err
 	}
-	// Registration itself creates no cache entry. The bump still closes the
-	// linearization point for readers that computed the same user concurrently.
+	// No cache entry is created here; the epoch bump still orders readers
+	// that computed this user concurrently.
 	e.commit(func() {})
 	return nil
 }

@@ -5,8 +5,8 @@ import (
 	"github.com/cupen/libauth/store"
 )
 
-// CreateRole registers a new role. Parent, when non-empty, must exist and
-// must not create a cycle or exceed the inheritance depth cap.
+// CreateRole registers a new role. A non-empty parent must exist and must
+// not create a cycle or exceed the depth cap.
 func (e *Enforcer) CreateRole(name model.RoleID, permissions []model.Permission, parent model.RoleID) error {
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()
@@ -69,9 +69,7 @@ func (e *Enforcer) DeleteRole(name model.RoleID) error {
 		return err
 	}
 
-	// Snapshot the holders from the Store rather than maintaining a reverse
-	// index in memory. Role deletion is rare, while a reverse index would make
-	// every registered user consume Enforcer memory even if never checked.
+	// Scan holders instead of keeping a reverse index; deletion is rare.
 	users, err := e.store.ListUsers()
 	if err != nil {
 		return err
@@ -110,9 +108,7 @@ func (e *Enforcer) DeleteRole(name model.RoleID) error {
 	if err := e.store.DeleteRole(name); err != nil {
 		return err
 	}
-	// Users and child roles changed together, and descendants lose anything
-	// inherited through this role. Without a holder index the safe, simple
-	// invalidation is the whole user cache.
+	// Descendants may lose inherited permissions, so flush the user cache.
 	e.invalidateAll()
 	return nil
 }
@@ -167,9 +163,7 @@ func (e *Enforcer) RevokePermission(role model.RoleID, p model.Permission) error
 	return nil
 }
 
-// SetParent makes role inherit from parent. A role has at most one parent;
-// setting a new parent replaces the previous one, and an empty parent
-// detaches the role from any inheritance chain.
+// SetParent makes role inherit from parent; "" detaches it.
 func (e *Enforcer) SetParent(role, parent model.RoleID) error {
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()

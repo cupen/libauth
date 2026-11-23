@@ -11,15 +11,12 @@ var (
 )
 
 // PermissionDeniedError carries the context of a failed authorization.
-// Exactly one of Required, RequiredAny or RequiredRole describes what the
-// user lacked; the others stay zero.
+// Exactly one of Required, RequiredAny or RequiredRole is set.
 type PermissionDeniedError struct {
-	UserID   UserID
-	User     *User
-	Required Permission // the permission the call demanded
-	// RequiredAny is the list the call accepted any one of.
-	RequiredAny []Permission
-	// RequiredRole is the role the call demanded.
+	UserID       UserID
+	User         *User
+	Required     Permission
+	RequiredAny  []Permission
 	RequiredRole RoleID
 	Roles        []RoleID
 }

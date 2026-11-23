@@ -12,13 +12,11 @@ type (
 	IdentityFunc = middleware.IdentityFunc
 )
 
-// NewMiddleware builds middleware for the enforcer. identity must be
-// non-nil — HeaderIdentity("") is the demo identity; production wires a
-// real one.
+// NewMiddleware builds HTTP guards for the enforcer. identity must be
+// non-nil; get one from HeaderIdentity or write your own.
 func NewMiddleware(m *Enforcer, identity IdentityFunc, opts ...middleware.Option) (*Middleware, error) {
 	if m == nil {
-		// A typed-nil *Enforcer reaches the interface parameter as
-		// non-nil; catch it here.
+		// A typed-nil *Enforcer arrives as a non-nil interface.
 		return nil, ErrNilAuthorizer
 	}
 	return middleware.NewMiddleware(m, identity, opts...)
@@ -26,7 +24,6 @@ func NewMiddleware(m *Enforcer, identity IdentityFunc, opts ...middleware.Option
 
 func HeaderIdentity(header string) IdentityFunc { return middleware.HeaderIdentity(header) }
 
-// WithOnError replaces the middleware's default JSON error response.
 func WithOnError(h middleware.ErrorHandler) middleware.Option {
 	return middleware.WithOnError(h)
 }

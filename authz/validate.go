@@ -6,7 +6,7 @@ import (
 )
 
 // validateInheritance rejects self-parents, cycles and chains deeper than
-// maxDepth. With single parents the ancestor walk is a simple loop.
+// maxDepth.
 func (e *Enforcer) validateInheritance(r *model.Role) error {
 	if r.Parent == "" {
 		return nil

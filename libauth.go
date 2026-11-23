@@ -1,17 +1,7 @@
 // Package libauth implements a multi-role permission system (RBAC).
 //
-// A user is granted a permission when ANY of its roles (including roles
-// inherited transitively through parent roles) matches the permission, or
-// when the user holds the permission directly.
-//
-// The implementation is layered: core data types in model, the persistence
-// contract in store, the HTTP guards in middleware and the RBAC
-// orchestration in authz (as the Enforcer type). All public identifiers are
-// re-exported from this package so callers only need one import.
-//
-// Stateless identity tokens come in two flavours: signed JWTs in the jwt
-// subpackage (HS256 / Ed25519, stdlib only) and encrypted branca tokens in
-// the branca subpackage (XChaCha20-Poly1305, golang.org/x/crypto).
+// All public identifiers are re-exported here; the implementation lives in
+// model, store, middleware, authz, jwt and branca.
 package libauth
 
 import (
@@ -22,7 +12,6 @@ import (
 	"github.com/cupen/libauth/store"
 )
 
-// Core RBAC data types, re-exported from the model subpackage.
 type (
 	UserID     = model.UserID
 	RoleID     = model.RoleID
@@ -31,14 +20,12 @@ type (
 	Role       = model.Role
 )
 
-// Built-in action names. Custom string actions are also supported.
 const (
 	ActionRead  = model.ActionRead
 	ActionWrite = model.ActionWrite
 	ActionExec  = model.ActionExec
 )
 
-// ParsePermission parses a "resource:action" string into a Permission.
 func ParsePermission(s string) (Permission, error) { return model.ParsePermission(s) }
 
 type (

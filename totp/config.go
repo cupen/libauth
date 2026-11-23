@@ -8,22 +8,18 @@ import (
 	"time"
 )
 
-// Algorithm identifies the HMAC hash used to derive codes. Only SHA-1 is
-// supported, as RFC 6238's interoperable default.
+// Algorithm identifies the HMAC hash used to derive codes.
 type Algorithm string
 
-// AlgorithmSHA1 is the only supported algorithm. Authenticator apps assume
-// it when the otpauth URI omits the algorithm parameter.
+// AlgorithmSHA1 is the only supported algorithm.
 const AlgorithmSHA1 Algorithm = "SHA1"
 
-// Clock returns the current time. Inject one via WithNow.
+// Clock returns the current time; inject one via WithNow in tests.
 type Clock func() time.Time
 
-// Exported defaults. New rejects any configuration that deviates from them,
-// because interoperable TOTP deployments pin these values.
+// Defaults; New rejects any configuration that deviates from them.
 const (
-	// SecretSize is the number of random bytes in a TOTP secret: 160 bits,
-	// the size RFC 4226 recommends for HMAC-SHA-1.
+	// SecretSize is the RFC 4226 recommended 160-bit secret length.
 	SecretSize = 20
 
 	// KeySize is the exact AES-256 key length New requires.
@@ -76,9 +72,7 @@ func newSettings(opts []Option) *settings {
 	return s
 }
 
-// WithIssuer sets the issuer shown by authenticator apps and embedded in
-// the otpauth URI. It is required and may not be blank or contain a colon
-// (the colon separates issuer and account in the URI label).
+// WithIssuer sets the issuer required by New; it must not contain ':'.
 func WithIssuer(issuer string) Option { return func(s *settings) { s.issuer = issuer } }
 
 // WithPeriod sets the step size in seconds. Only 30 is accepted.
@@ -90,15 +84,13 @@ func WithDigits(digits int) Option { return func(s *settings) { s.digits = digit
 // WithAlgorithm sets the HMAC algorithm. Only SHA1 is accepted.
 func WithAlgorithm(alg Algorithm) Option { return func(s *settings) { s.algorithm = alg } }
 
-// WithSkew sets how many steps of clock drift are accepted on either side
-// of the current step. Valid values are 0 and 1; the default is 1.
+// WithSkew sets the accepted clock drift in steps (0 or 1, default 1).
 func WithSkew(steps int) Option { return func(s *settings) { s.skew = steps } }
 
 // WithEnrollmentTTL sets how long a pending enrollment stays activatable.
-// The default is 10 minutes; the value must be positive.
 func WithEnrollmentTTL(ttl time.Duration) Option { return func(s *settings) { s.ttl = ttl } }
 
-// WithNow overrides the clock. nil restores time.Now.
+// WithNow overrides the clock; nil restores time.Now.
 func WithNow(now Clock) Option {
 	return func(s *settings) {
 		if now == nil {
@@ -108,8 +100,7 @@ func WithNow(now Clock) Option {
 	}
 }
 
-// WithRand overrides the randomness source used for secrets and AEAD
-// nonces. nil is ignored.
+// WithRand overrides the randomness source for secrets and nonces.
 func WithRand(r io.Reader) Option {
 	return func(s *settings) {
 		if r != nil {

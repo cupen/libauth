@@ -11,16 +11,11 @@ import (
 type State string
 
 const (
-	// StatePending: a secret was issued but no valid code has confirmed it.
-	// Verify refuses pending credentials; Activate turns one into active.
 	StatePending State = "pending"
-
-	// StateActive: codes are accepted by Verify.
-	StateActive State = "active"
+	StateActive  State = "active"
 )
 
-// Credential is one user's TOTP enrollment. The secret is stored encrypted;
-// callers must treat EncryptedSecret as opaque bytes.
+// Credential is one user's TOTP enrollment. EncryptedSecret is opaque.
 type Credential struct {
 	UserID              string
 	State               State
@@ -29,15 +24,12 @@ type Credential struct {
 	Digits              int
 	Period              int
 	EnrollmentExpiresAt time.Time
-	// LastUsedStep is the highest step already consumed by a successful
-	// Activate or Verify. -1 means no step has been consumed yet.
+	// LastUsedStep is the highest consumed step; -1 means none.
 	LastUsedStep int64
-	// Revision is the optimistic-locking version. Create requires 0 and
-	// stores revision 1; every Update increments it.
+	// Revision is the optimistic-locking version.
 	Revision uint64
 }
 
-// Clone returns a deep copy of the credential.
 func (c Credential) Clone() Credential {
 	out := c
 	if c.EncryptedSecret != nil {
@@ -46,29 +38,16 @@ func (c Credential) Clone() Credential {
 	return out
 }
 
-// Store persists TOTP credentials.
+// Store persists TOTP credentials. Implementations must be safe for
+// concurrent use, honor context cancellation and return defensive copies.
 //
-// Implementations must be safe for concurrent use, honor context
-// cancellation, and return defensive copies: neither the caller nor the
-// store may share the EncryptedSecret backing array.
-//
-// Atomicity contract for production stores:
-//
-//   - Create succeeds only when no credential exists for the user and
-//     c.Revision is 0, storing it with Revision 1. A duplicate is
-//     ErrConflict.
-//   - Get returns ErrNotFound when no credential exists.
-//   - Update replaces the whole row only when a credential for c.UserID
-//     exists with exactly c.Revision, storing it with Revision+1. A missing
-//     row or a revision mismatch is ErrConflict.
-//   - Delete removes the row only when both userID and revision match.
-//     A missing row or a revision mismatch is ErrConflict.
-//
-// A SQL implementation would use UPDATE ... WHERE user_id = ? AND
-// revision = ?, checking the affected-row count. A MongoDB implementation
-// would use replaceOne with a revision filter and looked-up document
-// versioning. Either way the comparison and the write must be one atomic
-// operation.
+// Atomicity contract:
+//   - Create succeeds only when no credential exists and c.Revision is 0,
+//     storing Revision 1; a duplicate is ErrConflict.
+//   - Get returns ErrNotFound when absent.
+//   - Update replaces the row only when c.Revision matches, storing
+//     Revision+1; a missing row or mismatch is ErrConflict.
+//   - Delete removes the row only when userID and revision both match.
 type Store interface {
 	Create(ctx context.Context, c Credential) error
 	Get(ctx context.Context, userID string) (Credential, error)
@@ -76,8 +55,7 @@ type Store interface {
 	Delete(ctx context.Context, userID string, revision uint64) error
 }
 
-// MemoryStore is a thread-safe in-memory Store for development and tests.
-// It is not durable and should not be used in production.
+// MemoryStore is a thread-safe, non-durable Store for development and tests.
 type MemoryStore struct {
 	mu   sync.Mutex
 	rows map[string]Credential
@@ -100,7 +78,6 @@ func (m *MemoryStore) ctxErr(ctx context.Context) error {
 	}
 }
 
-// Create implements Store.
 func (m *MemoryStore) Create(ctx context.Context, c Credential) error {
 	if err := m.ctxErr(ctx); err != nil {
 		return err
@@ -122,7 +99,6 @@ func (m *MemoryStore) Create(ctx context.Context, c Credential) error {
 	return nil
 }
 
-// Get implements Store.
 func (m *MemoryStore) Get(ctx context.Context, userID string) (Credential, error) {
 	if err := m.ctxErr(ctx); err != nil {
 		return Credential{}, err
@@ -139,7 +115,6 @@ func (m *MemoryStore) Get(ctx context.Context, userID string) (Credential, error
 	return c.Clone(), nil
 }
 
-// Update implements Store.
 func (m *MemoryStore) Update(ctx context.Context, c Credential) error {
 	if err := m.ctxErr(ctx); err != nil {
 		return err
@@ -159,7 +134,6 @@ func (m *MemoryStore) Update(ctx context.Context, c Credential) error {
 	return nil
 }
 
-// Delete implements Store.
 func (m *MemoryStore) Delete(ctx context.Context, userID string, revision uint64) error {
 	if err := m.ctxErr(ctx); err != nil {
 		return err

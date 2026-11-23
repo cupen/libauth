@@ -1,26 +1,10 @@
-// Command jwtauth demonstrates libauth with JWT bearer authentication:
-// POST /login issues a short-lived HS256 token naming the user (sub), and
-// every protected route verifies it through a small IdentityFunc that
-// reads the sub claim.
-//
-// Roles and permissions live server-side, so changing a user's roles
-// takes effect on their next request — tokens stay valid, the authority
-// behind them does not.
-//
-// The demo accepts any known username without a password; wire a real
-// credential check into the login handler in production.
-//
-// Seeded accounts:
-//
-//	alice — admin           (all permissions via "*")
-//	bob   — editor + viewer (multi-role union)
-//	carol — viewer          (read only)
+// Command jwtauth demonstrates JWT bearer authentication: POST /login issues
+// an HS256 token whose sub is the user, and protected routes verify it.
+// Any known username is accepted without a password; do not copy that.
 //
 //	go run ./_examples/jwtauth
 //	TOKEN=$(curl -s -X POST -d '{"username":"bob"}' localhost:8081/login | sed -E 's/.*"token":"([^"]+)".*/\1/')
-//	curl -H "Authorization: Bearer $TOKEN" localhost:8081/whoami
 //	curl -H "Authorization: Bearer $TOKEN" localhost:8081/articles
-//	curl -X POST -H "Authorization: Bearer $TOKEN" -d '{"title":"hi"}' localhost:8081/articles
 package main
 
 import (
@@ -42,14 +26,12 @@ const issuer = "libauth-jwtauth-demo"
 
 const ttl = 15 * time.Minute
 
-// secret must be at least 32 bytes for HS256 (RFC 7518 §3.2).
+// secret must be at least 32 bytes for HS256.
 var secret = []byte("demo-secret-0123456789abcdef-demo-secret-32")
 
 func main() {
 	m := seed()
 
-	// One symmetric JWT for the whole server. WithTTL / WithIssuer flow to
-	// the signer, WithExpectedIssuer to the verifier.
 	auth, err := jwt.New(secret,
 		jwt.WithTTL(ttl),
 		jwt.WithIssuer(issuer),
@@ -74,9 +56,7 @@ func main() {
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
 
-// jwtIdentity builds the IdentityFunc the middleware uses to name the
-// calling user. Decode errors (malformed, bad signature, expired) all
-// surface as 401.
+// jwtIdentity resolves the user from a Bearer token.
 func jwtIdentity(auth *jwt.JWT) libauth.IdentityFunc {
 	return func(r *http.Request) (libauth.UserID, error) {
 		h := r.Header.Get("Authorization")

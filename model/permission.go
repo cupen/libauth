@@ -1,5 +1,4 @@
-// Package model defines the RBAC data types. Persistence and HTTP live
-// elsewhere so these types can be serialized, cached or transported as-is.
+// Package model defines the RBAC data types.
 package model
 
 import (
@@ -8,17 +7,15 @@ import (
 	"strings"
 )
 
-// Built-in action names. Actions remain open-ended strings, so callers may
-// use any custom name without registering it. Each action is independent:
-// write does not imply read, and exec implies neither.
+// Built-in action names. Any other string is also a valid action.
 const (
 	ActionRead  = "read"
 	ActionWrite = "write"
 	ActionExec  = "exec"
 )
 
-// Permission is a {Resource, Action} pair. Either field may be "*" as a
-// wildcard; {Resource: "*"} alone grants everything.
+// Permission is a {Resource, Action} pair; either field may be "*" as a
+// wildcard, and {Resource: "*"} alone grants everything.
 type Permission struct {
 	Resource string `json:"resource"`
 	Action   string `json:"action"`
@@ -70,8 +67,8 @@ func (p Permission) MatchesAny(required ...Permission) bool {
 	return false
 }
 
-// Valid reports whether the permission is well-formed. {Resource: "*"} is
-// valid even with empty Action; everything else needs both fields.
+// Valid reports whether the permission is well-formed. {Resource: "*"} needs
+// no action; everything else needs both fields.
 func (p Permission) Valid() bool {
 	if p.Resource == "" {
 		return false

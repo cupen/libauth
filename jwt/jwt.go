@@ -1,28 +1,9 @@
-// Package jwt implements a minimal, dependency-free JWT encoder and decoder
-// (RFC 7519) for carrying libauth identities.
+// Package jwt encodes and decodes compact JWTs (RFC 7519) for libauth
+// identities: HS256 with a shared secret, or EdDSA with an Ed25519 key.
 //
-// Security posture:
-//   - Algorithm pinned at construction: Decode only accepts tokens signed
-//     with the exact algorithm the JWT was built for, so "none" and
-//     cross-algorithm confusion are structurally impossible.
-//   - HS256 (HMAC-SHA-256) and EdDSA (Ed25519), both stdlib-only.
-//   - Signature verified before any claim is parsed.
-//   - Encode refuses claims without exp unless a default TTL is configured.
-//   - Encode refuses claims without sub.
-//
-// One type covers every deployment shape:
-//
-//	auth, err := jwt.New(secret,
-//	    jwt.WithTTL(15*time.Minute),
-//	    jwt.WithIssuer("login"),
-//	    jwt.WithExpectedIssuer("login"),
-//	)
-//	token, err := auth.Encode(jwt.Claims{Subject: "bob"})
-//	claims, err := auth.Decode(token)
-//
-// New binds HS256 under a shared secret. NewEdDSA signs with an Ed25519
-// private key; API servers that only verify call NewVerifierEdDSA with the
-// public half — Encode on that instance fails with ErrInvalidKey.
+// The algorithm is pinned at construction, so "none" and cross-algorithm
+// confusion are impossible; Decode verifies the signature before parsing
+// claims; Encode refuses claims without a subject or expiration.
 package jwt
 
 import (
@@ -39,29 +20,23 @@ const (
 	AlgEdDSA = "EdDSA" // Ed25519 (RFC 8037)
 )
 
-// Clock returns the current time. Inject one via WithNow to make encoding
-// and decoding deterministic.
+// Clock returns the current time; inject one via WithNow in tests.
 type Clock func() time.Time
 
-// Option customises encoding or decoding. Options that do not apply to the
-// side they were passed to are ignored: WithTTL / WithIssuer / WithAudience
-// affect Encode, WithExpectedIssuer / WithExpectedAudience / WithLeeway
-// affect Decode, WithNow affects both.
+// Option customises encoding or decoding. Options are ignored on the side
+// they do not apply to: WithTTL / WithIssuer / WithAudience affect Encode,
+// WithExpectedIssuer / WithExpectedAudience / WithLeeway affect Decode, and
+// WithNow affects both.
 type Option func(*settings)
 
 type settings struct {
-	// Encode: default ExpiresAt applied when signed claims carry none.
-	ttl time.Duration
-	// Encode: default Issuer / Audience applied when claims leave them empty.
-	issuer   string
-	audience Audience
-	// Decode: tolerated clock skew around exp/nbf/iat checks.
-	leeway time.Duration
-	// Decode: pinned iss / aud when non-empty.
+	ttl            time.Duration
+	issuer         string
+	audience       Audience
+	leeway         time.Duration
 	expectIssuer   string
 	expectAudience string
-	// both: injectable clock.
-	now Clock
+	now            Clock
 }
 
 func newSettings(opts []Option) *settings {
@@ -78,31 +53,27 @@ func newSettings(opts []Option) *settings {
 }
 
 // WithTTL sets the default validity period Encode applies when claims carry
-// no ExpiresAt (decoding ignores it).
+// no ExpiresAt.
 func WithTTL(d time.Duration) Option { return func(s *settings) { s.ttl = d } }
 
-// WithIssuer sets the default Issuer claim Encode applies when claims carry
-// none (decoding ignores it).
+// WithIssuer sets the default Issuer claim applied by Encode.
 func WithIssuer(iss string) Option { return func(s *settings) { s.issuer = iss } }
 
-// WithAudience sets the default Audience claim Encode applies when claims
-// carry none (decoding ignores it).
+// WithAudience sets the default Audience claim applied by Encode.
 func WithAudience(aud ...string) Option { return func(s *settings) { s.audience = aud } }
 
 // WithLeeway sets the tolerated clock skew for the exp, nbf and iat checks.
-// Default is zero (encoding ignores it).
 func WithLeeway(d time.Duration) Option { return func(s *settings) { s.leeway = d } }
 
 // WithExpectedIssuer pins decoding to tokens issued by iss.
 func WithExpectedIssuer(iss string) Option { return func(s *settings) { s.expectIssuer = iss } }
 
-// WithExpectedAudience pins decoding to tokens whose aud claim contains aud.
+// WithExpectedAudience pins decoding to tokens whose aud contains aud.
 func WithExpectedAudience(aud string) Option {
 	return func(s *settings) { s.expectAudience = aud }
 }
 
-// WithNow overrides the clock used for iat/exp arithmetic. nil restores
-// time.Now.
+// WithNow overrides the clock; nil restores time.Now.
 func WithNow(now Clock) Option {
 	return func(s *settings) {
 		if now == nil {
@@ -112,16 +83,15 @@ func WithNow(now Clock) Option {
 	}
 }
 
-// JWT encodes and decodes compact-serialization tokens for one pinned
-// algorithm. It is safe for concurrent use.
+// JWT encodes and decodes tokens for one pinned algorithm. It is safe for
+// concurrent use.
 type JWT struct {
 	alg algorithm
 	set *settings
 }
 
-// New returns an HS256 JWT keyed with a shared secret. The secret must be
-// at least 32 bytes (RFC 7518 §3.2); both Encode and Decode work on the
-// returned instance.
+// New returns an HS256 JWT keyed with a shared secret of at least 32 bytes
+// (RFC 7518 §3.2).
 func New(key []byte, opts ...Option) (*JWT, error) {
 	alg, err := newHMACAlg(AlgHS256, key)
 	if err != nil {
@@ -130,8 +100,7 @@ func New(key []byte, opts ...Option) (*JWT, error) {
 	return &JWT{alg: alg, set: newSettings(opts)}, nil
 }
 
-// NewEdDSA returns an EdDSA JWT that signs with priv (generate one with
-// ed25519.GenerateKey; the public half is derived from it).
+// NewEdDSA returns an EdDSA JWT that signs with priv.
 func NewEdDSA(priv ed25519.PrivateKey, opts ...Option) (*JWT, error) {
 	alg, err := newEdDSASignAlg(priv)
 	if err != nil {
@@ -140,8 +109,8 @@ func NewEdDSA(priv ed25519.PrivateKey, opts ...Option) (*JWT, error) {
 	return &JWT{alg: alg, set: newSettings(opts)}, nil
 }
 
-// NewVerifierEdDSA returns a verify-only EdDSA JWT keyed with the issuer's
-// public key; it cannot sign — Encode fails with ErrInvalidKey.
+// NewVerifierEdDSA returns a verify-only EdDSA JWT; Encode fails with
+// ErrInvalidKey.
 func NewVerifierEdDSA(pub ed25519.PublicKey, opts ...Option) (*JWT, error) {
 	alg, err := newEdDSAVerifyAlg(pub)
 	if err != nil {
@@ -152,12 +121,10 @@ func NewVerifierEdDSA(pub ed25519.PublicKey, opts ...Option) (*JWT, error) {
 
 func (j *JWT) Algorithm() string { return j.alg.name() }
 
-// Encode issues a compact-serialization token for the claims.
-//
-// Defaults applied before signing: IssuedAt becomes now when zero;
-// ExpiresAt becomes IssuedAt plus the configured TTL when zero (and
-// Encode fails with ErrMissingExpiration if no TTL is configured either);
-// Issuer and Audience fall back to the configured values when empty.
+// Encode issues a compact-serialization token. It fills IssuedAt, ExpiresAt
+// (from the TTL when unset), Issuer and Audience from the configured
+// defaults, and fails with ErrMissingExpiration when no expiration is
+// available.
 func (j *JWT) Encode(claims Claims) (string, error) {
 	if claims.Subject == "" {
 		return "", ErrMissingSubject
@@ -192,12 +159,8 @@ func (j *JWT) Encode(claims Claims) (string, error) {
 	return input + "." + b64encode(signature), nil
 }
 
-// Decode checks the token's structure and signature, then validates the
-// registered time claims (exp, nbf, iat, each with the configured leeway)
-// and the pinned iss/aud when configured.
-//
-// Order matters: the signature is checked before the payload is parsed,
-// so untrusted input never reaches claim handling unauthenticated.
+// Decode verifies the signature before parsing claims, then validates exp,
+// nbf, iat and the pinned issuer/audience.
 func (j *JWT) Decode(token string) (*Claims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {

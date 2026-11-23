@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// Audience is the "aud" claim. A single audience marshals to a JSON string,
-// several to an array; both spellings unmarshal back into an Audience.
+// Audience is the "aud" claim: one value marshals to a string, several to an
+// array, and both spellings unmarshal.
 type Audience []string
 
 func (a Audience) Contains(s string) bool {
@@ -50,8 +50,7 @@ func (a *Audience) UnmarshalJSON(data []byte) error {
 	return fmt.Errorf("libauth: aud claim must be a string or an array of strings")
 }
 
-// reservedClaims are the RFC 7519 §4.1 claim names — typed fields on
-// Claims that Extra may not shadow.
+// reservedClaims are the RFC 7519 §4.1 names that Extra may not shadow.
 var reservedClaims = map[string]struct{}{
 	"sub": {},
 	"iss": {},
@@ -62,20 +61,18 @@ var reservedClaims = map[string]struct{}{
 	"nbf": {},
 }
 
-// Claims is the payload of a libauth identity token. Registered claims
-// (RFC 7519 §4.1) are typed fields; anything else round-trips through
-// Extra with numbers preserved as json.Number.
+// Claims is the payload of a libauth identity token. Anything outside the
+// registered claims round-trips through Extra, with numbers kept as
+// json.Number.
 type Claims struct {
-	Subject   string    // "sub"
-	Issuer    string    // "iss"
-	Audience  Audience  // "aud"
-	ID        string    // "jti"
-	IssuedAt  time.Time // "iat" — Sign fills with current time when zero.
-	ExpiresAt time.Time // "exp" — Sign requires it, either set or via WithTTL.
-	NotBefore time.Time // "nbf"
+	Subject   string
+	Issuer    string
+	Audience  Audience
+	ID        string
+	IssuedAt  time.Time
+	ExpiresAt time.Time
+	NotBefore time.Time
 
-	// Extra carries non-registered claims. Names in reservedClaims are
-	// rejected on encode and never populated on decode.
 	Extra map[string]any
 }
 
@@ -206,9 +203,8 @@ func jsonUnmarshalString(data []byte, out *string) error {
 	return nil
 }
 
-// jsonUnmarshalDate decodes a NumericDate (UNIX seconds). A quoted string
-// is not a NumericDate per RFC 7519 and is rejected — json.Number would
-// otherwise happily accept one.
+// jsonUnmarshalDate decodes a NumericDate. Quoted strings are rejected, as
+// json.Number would otherwise accept them.
 func jsonUnmarshalDate(data []byte) (time.Time, error) {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 || (trimmed[0] != '-' && (trimmed[0] < '0' || trimmed[0] > '9')) {

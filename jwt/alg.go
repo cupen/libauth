@@ -14,9 +14,8 @@ var b64 = base64.RawURLEncoding
 func b64encode(b []byte) string          { return b64.EncodeToString(b) }
 func b64decode(s string) ([]byte, error) { return b64.DecodeString(s) }
 
-// algorithm is the pinned signing scheme behind a Signer or Verifier. Each
-// implementation covers exactly one JOSE alg value, which is how
-// cross-algorithm confusion is ruled out structurally.
+// algorithm is one pinned JOSE signing scheme; one implementation per alg
+// value rules out cross-algorithm confusion.
 type algorithm interface {
 	name() string
 	header() []byte
@@ -24,8 +23,7 @@ type algorithm interface {
 	verify(input, sig []byte) error
 }
 
-// minHMACKeySize is the SHA-256 output size; RFC 7518 §3.2 says HS256 keys
-// SHOULD have at least this many bytes.
+// minHMACKeySize follows RFC 7518 §3.2 for HS256.
 const minHMACKeySize = 32
 
 type hmacAlg struct {

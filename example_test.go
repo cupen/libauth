@@ -1,9 +1,5 @@
 package libauth_test
 
-// Example functions are runnable documentation: `go test` executes them
-// and verifies the printed output, and godoc renders them next to the API
-// they demonstrate.
-
 import (
 	"errors"
 	"fmt"

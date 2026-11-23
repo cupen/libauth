@@ -1,21 +1,9 @@
-// Command example demonstrates libauth with a small HTTP API.
-//
-// Identities are supplied via the X-User-ID header (see HeaderIdentity);
-// for a real deployment plug in JWT/session authentication — see
-// _examples/jwtauth for a Bearer-token variant.
-//
-// Seeded accounts:
-//
-//	alice — admin                       (all permissions via "*")
-//	bob   — editor + viewer             (multi-role union)
-//	carol — viewer                      (read only)
-//	dave  — publisher (inherits editor) (role inheritance)
+// Command example demonstrates libauth behind a small HTTP API, identifying
+// callers by the X-User-ID header. See _examples/jwtauth for bearer tokens.
 //
 //	go run ./_examples/example01
 //	curl -H "X-User-ID: alice" localhost:8080/articles          # 200
-//	curl -X POST -H "X-User-ID: bob" localhost:8080/articles    # 201
 //	curl -X POST -H "X-User-ID: carol" localhost:8080/articles  # 403
-//	curl -H "X-User-ID: carol" localhost:8080/whoami            # effective permissions
 package main
 
 import (
@@ -53,9 +41,6 @@ func main() {
 	mux.Handle("GET /articles", mw.Require(libauth.Permission{Resource: "article", Action: "read"})(http.HandlerFunc(s.list)))
 	mux.Handle("POST /articles", mw.Require(libauth.Permission{Resource: "article", Action: "create"})(http.HandlerFunc(s.create)))
 	mux.Handle("DELETE /articles/{id}", mw.Require(libauth.Permission{Resource: "article", Action: "delete"})(http.HandlerFunc(s.remove)))
-	// Multi-permission and role-based guards are also available:
-	//   mux.Handle("POST /publish", mw.RequireAll(perms...)(...))
-	//   mux.Handle("GET /audit",    mw.RequireRole("admin")(...))
 
 	log.Printf("listening on http://localhost:8080 (identify via X-User-ID header)")
 	log.Fatal(http.ListenAndServe("localhost:8080", mux))

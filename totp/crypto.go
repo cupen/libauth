@@ -11,13 +11,8 @@ import (
 
 var errTruncatedCiphertext = errors.New("ciphertext is truncated")
 
-// secretCipher seals TOTP secrets with AES-256-GCM. The user ID is the
-// additional authenticated data, binding a ciphertext to the credential it
-// was issued for: copying a row to another user makes it undecryptable.
-//
-// Ciphertext layout (opaque to Store implementations): nonce || sealed.
-// Changing the AAD or layout is a storage-format change and requires a
-// migration.
+// secretCipher seals TOTP secrets with AES-256-GCM, using the user ID as AAD
+// so a ciphertext cannot be moved to another user. Layout: nonce || sealed.
 type secretCipher struct {
 	aead cipher.AEAD
 	rand io.Reader

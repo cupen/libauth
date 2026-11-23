@@ -10,23 +10,15 @@ import (
 	"time"
 )
 
-// maxConflictRetries bounds how many times an operation re-reads the
-// credential after losing an optimistic-locking race. Concurrent operations
-// converge within one or two rounds; the bound exists so a hot credential
-// can never spin forever.
+// maxConflictRetries bounds retries after losing an optimistic-locking race.
 const maxConflictRetries = 3
 
-// Enrollment is the one-time result of Enroll. Secret is returned exactly
-// once and never again: losing it means the user must re-enroll.
+// Enrollment is the one-time result of Enroll; the secret is shown exactly
+// once.
 type Enrollment struct {
-	// State is always StatePending for a fresh enrollment.
-	State State
-	// Secret is the Base32 (no padding) shared secret, for manual entry or
-	// QR rendering.
-	Secret string
-	// URI is the otpauth:// URI to render as a QR code.
-	URI string
-	// ExpiresAt is when Activate stops accepting codes.
+	State     State
+	Secret    string // Base32, no padding
+	URI       string
 	ExpiresAt time.Time
 }
 
@@ -38,10 +30,8 @@ type Authenticator struct {
 	set    *settings
 }
 
-// New returns an Authenticator persisting to store and sealing secrets with
-// the 32-byte encryptionKey. An issuer is required via WithIssuer; the other
-// options default to the interoperable TOTP profile (SHA1, 6 digits, 30s
-// steps, one step of skew).
+// New returns an Authenticator sealing secrets with the 32-byte
+// encryptionKey. WithIssuer is required.
 func New(store Store, encryptionKey []byte, opts ...Option) (*Authenticator, error) {
 	if store == nil {
 		return nil, fmt.Errorf("%w: store is required", ErrInvalidConfig)
@@ -57,11 +47,8 @@ func New(store Store, encryptionKey []byte, opts ...Option) (*Authenticator, err
 	return &Authenticator{store: store, cipher: cipher, set: set}, nil
 }
 
-// Enroll issues a new pending secret for userID.
-//
-// The secret is returned in the Enrollment only. Calling Enroll again while
-// the credential is pending rotates the secret and resets the deadline;
-// calling it while active returns ErrAlreadyEnabled (Disable first).
+// Enroll issues a new pending secret. Calling it on a pending credential
+// rotates the secret; on an active one it returns ErrAlreadyEnabled.
 func (a *Authenticator) Enroll(ctx context.Context, userID, accountName string) (*Enrollment, error) {
 	if strings.TrimSpace(userID) == "" {
 		return nil, fmt.Errorf("%w: user ID is required", ErrInvalidConfig)
@@ -69,8 +56,6 @@ func (a *Authenticator) Enroll(ctx context.Context, userID, accountName string) 
 	if strings.TrimSpace(accountName) == "" {
 		return nil, fmt.Errorf("%w: account name is required", ErrInvalidConfig)
 	}
-	// Reject an ambiguous label before any randomness is consumed or any
-	// state is written.
 	if strings.ContainsRune(accountName, ':') {
 		return nil, fmt.Errorf("%w: account name must not contain ':'", ErrInvalidConfig)
 	}
@@ -168,15 +153,10 @@ func (a *Authenticator) prepare(userID, accountName string, revision uint64) (Cr
 	}, nil
 }
 
-// Activate confirms a pending enrollment with its first valid code and
-// switches it to StateActive. The matching step is consumed, so the same
-// code is rejected by Verify afterwards.
-//
-// An expired pending enrollment returns ErrEnrollmentExpired and is left in
-// place. On an already-active credential the call reports ErrAlreadyEnabled,
-// except when code is exactly the step the winning activation consumed: that
-// is what the loser of a concurrent activation sees, and it reports
-// ErrCodeUsed.
+// Activate switches a pending enrollment to StateActive and consumes the
+// matching step. Expired enrollments return ErrEnrollmentExpired; on an
+// already-active credential it returns ErrAlreadyEnabled, or ErrCodeUsed
+// when the code was the one consumed by a concurrent activation.
 func (a *Authenticator) Activate(ctx context.Context, userID, code string) error {
 	if err := ctxErr(ctx); err != nil {
 		return err
@@ -230,8 +210,7 @@ func (a *Authenticator) Activate(ctx context.Context, userID, code string) error
 }
 
 // Verify checks code against an active credential and advances the last-used
-// step. It returns ErrNotEnabled while enrollment is pending, ErrCodeUsed for
-// a replayed or older code, and ErrInvalidCode when no accepted step matches.
+// step. Replays and older steps return ErrCodeUsed.
 func (a *Authenticator) Verify(ctx context.Context, userID, code string) error {
 	if err := ctxErr(ctx); err != nil {
 		return err
@@ -274,9 +253,8 @@ func (a *Authenticator) Verify(ctx context.Context, userID, code string) error {
 	return errConflictRetry
 }
 
-// codeConsumed reports whether code is exactly the step already consumed by
-// a successful activation. It sharpens the error the loser of a concurrent
-// activation returns; a decryption or format failure simply reports false.
+// codeConsumed reports whether code is the step already consumed by a
+// concurrent activation.
 func (a *Authenticator) codeConsumed(userID string, cur Credential, code string) bool {
 	secret, err := a.cipher.open(userID, cur.EncryptedSecret)
 	if err != nil {
@@ -293,7 +271,7 @@ func (a *Authenticator) codeConsumed(userID string, cur Credential, code string)
 }
 
 // profile resolves the per-credential digits/period, falling back to the
-// configured profile when the stored values are unusable.
+// configured profile.
 func (a *Authenticator) profile(cur Credential) (digits int, period int64) {
 	digits = cur.Digits
 	if digits < 1 || digits > 10 {
@@ -306,8 +284,8 @@ func (a *Authenticator) profile(cur Credential) (digits int, period int64) {
 	return digits, period
 }
 
-// consume validates code against cur's secret and returns the matching step.
-// A match that is not strictly newer than LastUsedStep is a replay.
+// consume validates code and returns the matching step; a step not strictly
+// newer than LastUsedStep is a replay.
 func (a *Authenticator) consume(secret []byte, cur Credential, code string) (int64, error) {
 	digits, period := a.profile(cur)
 	normalized, ok := parseCode(code, digits)
@@ -326,10 +304,8 @@ func (a *Authenticator) consume(secret []byte, cur Credential, code string) (int
 	return step, nil
 }
 
-// Disable removes the credential. Delete is conditional on the revision read
-// just before, so a concurrent change (a new enrollment, for instance) is
-// never deleted by mistake: the conflict surfaces as a retryable error
-// instead of a blind retry.
+// Disable removes the credential, conditional on the revision just read so a
+// concurrent re-enrollment is never deleted by mistake.
 func (a *Authenticator) Disable(ctx context.Context, userID string) error {
 	if err := ctxErr(ctx); err != nil {
 		return err
@@ -380,7 +356,6 @@ func ctxErr(ctx context.Context) error {
 	}
 }
 
-// compile-time assertion: Authenticator honours the approved method set.
 var _ interface {
 	Enroll(context.Context, string, string) (*Enrollment, error)
 	Activate(context.Context, string, string) error

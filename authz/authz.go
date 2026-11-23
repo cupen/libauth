@@ -14,77 +14,47 @@ import (
 // DefaultMaxDepth bounds role-inheritance resolution.
 const DefaultMaxDepth = 32
 
-// DefaultCacheSize bounds how many per-user permission caches stay in
-// memory. Registration alone does not consume cache space; entries are
-// created lazily by Check, HasRole, HasPermission and PermissionsFor.
+// DefaultCacheSize bounds the number of per-user cache entries.
 const DefaultCacheSize = 10_000
 
-// DefaultCacheCapacity is the former name of DefaultCacheSize.
 // Deprecated: use DefaultCacheSize instead.
 const DefaultCacheCapacity = DefaultCacheSize
 
 // DefaultCacheTTL is how long an unused user cache entry stays eligible for
-// hits. A zero TTL configured through WithCacheTTL disables time expiry.
+// hits. Zero disables time expiry.
 const DefaultCacheTTL = 24 * time.Hour
 
 // Enforcer is the high-level RBAC API. It is safe for concurrent use.
 //
-// Concurrency contract:
-//   - Reads (Check, Has*, PermissionsFor, RolesFor, Get*, List*) may run in
-//     any number of goroutines, with or without concurrent mutations.
-//   - Mutations (Create/Update/Delete/Assign/Revoke/Grant/SetParent) are
-//     serialized against each other, so concurrent writers never lose
-//     updates.
-//   - Every answer reflects some point in time between the call's start and
-//     its return; once a mutation returns, subsequent reads observe it.
-//
-// The Enforcer must be the only writer to its Store. External writes bypass
-// cache invalidation and can leave stale answers behind.
-//
-// A accessed user gets a memoized cache entry holding its effective permission
-// set and direct-role set. Entries are bounded by DefaultCacheSize and
-// expire after DefaultCacheTTL without access; role mutations flush the whole
-// user cache rather than maintaining per-role reverse indexes.
+// Reads may run concurrently; mutations are serialized and every returned
+// mutation is immediately visible to later reads. The Enforcer must be the
+// only writer to its Store.
 type Enforcer struct {
 	store     store.Store
 	maxDepth  int
 	cacheSize int
 	cacheTTL  time.Duration
-	// cacheNow is the cache clock. It is deliberately unexported: production
-	// uses time.Now while package tests advance it deterministically.
-	cacheNow func() time.Time
+	cacheNow  func() time.Time // overridable in tests
 
-	// writeMu serializes mutations so read-modify-write sequences against
-	// the store never lose updates to each other.
 	writeMu sync.Mutex
 
-	cacheMu sync.RWMutex
-	cache   map[model.UserID]*cacheEntry
-	// clockRing implements second-chance eviction. Slots may hold stale
-	// entries after invalidation; they are recognized and reused when the
-	// hand reaches them. It is allocated lazily and unused when unbounded.
+	cacheMu   sync.RWMutex
+	cache     map[model.UserID]*cacheEntry
 	clockRing []*cacheEntry
 	clockHand int
-	// epoch counts completed mutations. Cache installs record the epoch
-	// they were computed under and are dropped when a mutation finished
-	// in between, so a stale result can never persist in the cache.
+	// epoch counts completed mutations; installs from an older epoch are
+	// dropped so stale results never persist.
 	epoch uint64
 }
 
-// cacheEntry is one user's memoized authorization data. Entries are complete
-// and immutable once installed: a cold HasRole computes the full entry too,
-// which lets warm readers dereference granted and direct under RLock without
-// racing a writer filling in the other half. lastAccess and referenced use
-// atomics because they are updated on hits under cacheMu.RLock.
 type cacheEntry struct {
 	uid        model.UserID
 	granted    *grantedSet
 	direct     map[model.RoleID]struct{}
-	lastAccess atomic.Int64 // Unix nanoseconds
-	referenced atomic.Bool  // second-chance bit
+	lastAccess atomic.Int64
+	referenced atomic.Bool
 }
 
-// grantedSet indexes a user's granted permissions by (Resource, Action).
 type grantedSet struct {
 	byResource map[string]map[string]struct{}
 }
@@ -98,7 +68,6 @@ func (g *grantedSet) add(p model.Permission) {
 	actions[p.Action] = struct{}{}
 }
 
-// has reports whether the granted set covers required.
 func (g *grantedSet) has(required model.Permission) bool {
 	if g == nil {
 		return false
@@ -117,8 +86,7 @@ func (g *grantedSet) has(required model.Permission) bool {
 	return ok
 }
 
-// flatten returns the granted permissions as a sorted slice (literal
-// patterns, not their expanded coverage).
+// flatten returns the granted patterns as a slice, not their coverage.
 func (g *grantedSet) flatten() []model.Permission {
 	out := make([]model.Permission, 0, len(g.byResource)*2)
 	for r, actions := range g.byResource {
@@ -132,8 +100,7 @@ func (g *grantedSet) flatten() []model.Permission {
 // Option configures an Enforcer.
 type Option func(*Enforcer)
 
-// WithStore replaces the backing store (defaults to a MemoryStore). The
-// Enforcer must remain the store's only writer.
+// WithStore replaces the backing store (defaults to a MemoryStore).
 func WithStore(s store.Store) Option {
 	return func(e *Enforcer) { e.store = s }
 }
@@ -157,7 +124,6 @@ func WithCacheSize(n int) Option {
 	}
 }
 
-// WithCacheCapacity is the former name of WithCacheSize.
 // Deprecated: use WithCacheSize instead.
 func WithCacheCapacity(n int) Option { return WithCacheSize(n) }
 
@@ -171,9 +137,7 @@ func WithCacheTTL(d time.Duration) Option {
 	}
 }
 
-// WithUnboundedCache restores the pre-bound cache behaviour: entries are
-// kept until invalidated and capacity never triggers eviction. TTL settings
-// are unaffected.
+// WithUnboundedCache disables capacity-based eviction.
 func WithUnboundedCache() Option {
 	return func(e *Enforcer) { e.cacheSize = 0 }
 }
@@ -198,9 +162,6 @@ func New(opts ...Option) *Enforcer {
 	return e
 }
 
-// commit finalizes a mutation: it bumps the epoch (dropping any concurrent
-// cache install) and applies the given cache bookkeeping. Callers must hold
-// writeMu; fn runs under cacheMu.
 func (e *Enforcer) commit(fn func()) {
 	e.cacheMu.Lock()
 	e.epoch++
@@ -212,10 +173,6 @@ func (e *Enforcer) invalidateUser(id model.UserID) {
 	e.commit(func() { delete(e.cache, id) })
 }
 
-// invalidateAll drops every user cache entry. Role mutations take this broad
-// brush deliberately: they are low-frequency administrative writes, and
-// avoiding a per-role reverse index keeps registration memory proportional to
-// the Store rather than to the Enforcer.
 func (e *Enforcer) invalidateAll() {
 	e.commit(e.clearCacheLocked)
 }
@@ -241,8 +198,6 @@ func (e *Enforcer) touchEntry(entry *cacheEntry, now time.Time) {
 	entry.referenced.Store(true)
 }
 
-// lookupEntry returns a live entry and the epoch sampled around the lookup.
-// A hit is touched without acquiring a write lock; atomics keep that safe.
 func (e *Enforcer) lookupEntry(uid model.UserID) (*cacheEntry, uint64, bool) {
 	now := e.cacheNow()
 	e.cacheMu.RLock()
@@ -266,9 +221,8 @@ func directRoleSet(u *model.User) map[model.RoleID]struct{} {
 	return set
 }
 
-// installEntryLocked stores entry and, when bounded, evicts one victim with
-// the second-chance algorithm. Invalidated entries leave stale ring slots;
-// those slots are recognized by map identity and reused here in O(1).
+// installEntryLocked stores entry, evicting a victim with the second-chance
+// algorithm when the cache is bounded. Stale ring slots are reused in O(1).
 func (e *Enforcer) installEntryLocked(entry *cacheEntry, now time.Time) {
 	if old := e.cache[entry.uid]; old == entry {
 		return
@@ -299,9 +253,8 @@ func (e *Enforcer) installEntryLocked(entry *cacheEntry, now time.Time) {
 	}
 }
 
-// loadUserEntry returns the user's complete immutable cache entry. A
-// computation racing with a mutation is returned uncached; the next call
-// recomputes.
+// loadUserEntry returns the user's immutable cache entry. A computation that
+// races with a mutation is returned uncached and recomputed next time.
 func (e *Enforcer) loadUserEntry(uid model.UserID) (*cacheEntry, error) {
 	entry, epoch, ok := e.lookupEntry(uid)
 	if ok {
@@ -333,7 +286,6 @@ func (e *Enforcer) loadUserEntry(uid model.UserID) (*cacheEntry, error) {
 	return fresh, nil
 }
 
-// directRolesOf returns the user's directly held roles.
 func (e *Enforcer) directRolesOf(uid model.UserID) (map[model.RoleID]struct{}, error) {
 	entry, err := e.loadUserEntry(uid)
 	if err != nil {
@@ -342,7 +294,6 @@ func (e *Enforcer) directRolesOf(uid model.UserID) (map[model.RoleID]struct{}, e
 	return entry.direct, nil
 }
 
-// getGrantedSet returns the user's granted-permission set.
 func (e *Enforcer) getGrantedSet(uid model.UserID) (*grantedSet, error) {
 	entry, err := e.loadUserEntry(uid)
 	if err != nil {
@@ -351,8 +302,6 @@ func (e *Enforcer) getGrantedSet(uid model.UserID) (*grantedSet, error) {
 	return entry.granted, nil
 }
 
-// computeGranted walks the user's effective roles plus direct grants and
-// builds the permission index (without touching the cache).
 func (e *Enforcer) computeGranted(u *model.User) (*grantedSet, error) {
 	roles, err := e.resolveRoles(u)
 	if err != nil {

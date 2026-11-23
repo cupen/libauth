@@ -1,14 +1,11 @@
 // Package store defines libauth's persistence contract and ships an
 // in-memory reference implementation (MemoryStore).
-//
-// Relationships (which roles a user has, role inheritance) are owned by
-// the authz layer; Store only persists whole User / Role objects.
 package store
 
 import "github.com/cupen/libauth/model"
 
 // Store persists whole User / Role objects. Methods must be safe for
-// concurrent use; returned objects must be defensive copies.
+// concurrent use and must return defensive copies.
 type Store interface {
 	CreateUser(u *model.User) error
 	UpdateUser(u *model.User) error

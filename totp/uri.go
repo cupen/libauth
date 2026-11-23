@@ -6,17 +6,8 @@ import (
 	"strings"
 )
 
-// buildURI renders the otpauth:// URI for a TOTP enrollment.
-//
-// Format (Key Uri Format used by Google Authenticator and compatible apps):
-//
-//	otpauth://totp/{issuer}:{account}?secret=...&issuer=...&algorithm=SHA1&digits=6&period=30
-//
-// The label and every query value are percent-encoded with the same strict
-// RFC 3986 encoder, so a space becomes %20 rather than '+'. A colon inside
-// the raw issuer or account would make the label ambiguous, so it is
-// rejected rather than encoded: the spec reserves ':' as the label
-// separator.
+// buildURI renders the otpauth:// URI used by authenticator apps. A ':'
+// inside issuer or account is rejected because it separates the label.
 func buildURI(issuer, account, secret string, digits, period int) (string, error) {
 	if strings.ContainsRune(account, ':') {
 		return "", fmt.Errorf("%w: account name must not contain ':'", ErrInvalidConfig)
@@ -26,7 +17,6 @@ func buildURI(issuer, account, secret string, digits, period int) (string, error
 	}
 	label := percentEncode(issuer) + ":" + percentEncode(account)
 
-	// Fixed parameter order keeps the URI stable across calls and releases.
 	query := "secret=" + percentEncode(secret) +
 		"&issuer=" + percentEncode(issuer) +
 		"&algorithm=" + percentEncode(string(AlgorithmSHA1)) +
@@ -36,9 +26,8 @@ func buildURI(issuer, account, secret string, digits, period int) (string, error
 	return "otpauth://totp/" + label + "?" + query, nil
 }
 
-// percentEncode escapes everything outside RFC 3986's unreserved set. It is
-// stricter than url.PathEscape, which would leave reserved characters such
-// as '@' and ':' unescaped.
+// percentEncode escapes everything outside RFC 3986's unreserved set,
+// stricter than url.PathEscape.
 func percentEncode(s string) string {
 	const upperhex = "0123456789ABCDEF"
 	var b strings.Builder

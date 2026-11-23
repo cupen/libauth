@@ -11,9 +11,8 @@ type (
 	resolvedKey struct{}
 )
 
-// WithUser attaches the authenticated user to a context and marks the
-// request as having been resolved, so subsequent guards skip the identity
-// parse and store lookup.
+// WithUser attaches the authenticated user and marks the request resolved,
+// so later guards skip the identity lookup.
 func WithUser(ctx context.Context, u *model.User) context.Context {
 	ctx = context.WithValue(ctx, contextKey{}, u)
 	ctx = context.WithValue(ctx, resolvedKey{}, true)

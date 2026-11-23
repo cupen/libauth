@@ -1,25 +1,12 @@
 // Package branca implements the branca token specification
-// (https://github.com/tuupola/branca-spec): authenticated, encrypted API
-// tokens built on IETF XChaCha20-Poly1305 AEAD, base62 encoded.
-//
-// Wire format:
+// (https://github.com/tuupola/branca-spec): authenticated, encrypted tokens
+// built on XChaCha20-Poly1305 and base62 encoded.
 //
 //	Version (0xBA) || Timestamp (4B) || Nonce (24B) || Ciphertext || Tag (16B)
 //
-// The header is authenticated as the AEAD's additional data. The header
-// timestamp is what consumers check against a TTL at open time — the
-// issuing side cannot fix an expiry into the token, and the same token may
-// carry different validity windows for different consumers.
-//
-// The token format and crypto come from the specification; the AEAD
-// primitive is golang.org/x/crypto/chacha20poly1305. This is the only
-// dependency the libauth core and jwt packages do not have.
-//
-//	b, err := branca.New(key)
-//	token, err := b.Encode(Session{Sub: "bob"})
-//	var session Session
-//	tok, err := b.Decode(token, 30*time.Minute, &session)
-//	_ = tok.Timestamp
+// The header is the AEAD's additional data, so its timestamp cannot be
+// tampered with. TTL is applied by the consumer after decryption: the same
+// token may carry different validity windows for different consumers.
 package branca
 
 import (
@@ -35,7 +22,7 @@ import (
 )
 
 const (
-	// KeySize is the exact key length branca requires: 32 bytes.
+	// KeySize is the exact branca key length: 32 bytes.
 	KeySize = chacha20poly1305.KeySize
 
 	versionByte = 0xBA
@@ -55,8 +42,7 @@ type Token struct {
 	Payload   []byte
 }
 
-// Bytes is a raw-byte payload — a convenience for callers that do not
-// have a typed encoding.BinaryMarshaler.
+// Bytes is a raw-byte payload for callers without a typed marshaler.
 type Bytes []byte
 
 func (b Bytes) MarshalBinary() ([]byte, error) { return b, nil }
@@ -112,8 +98,8 @@ func New(key []byte, opts ...Option) (*Branca, error) {
 	return b, nil
 }
 
-// Encode encrypts v under the key and returns the resulting token. The
-// current time is embedded in the authenticated header.
+// Encode encrypts v and returns the token, stamping the current time into
+// the authenticated header.
 func (b *Branca) Encode(v encoding.BinaryMarshaler) (string, error) {
 	raw, err := v.MarshalBinary()
 	if err != nil {
@@ -122,11 +108,8 @@ func (b *Branca) Encode(v encoding.BinaryMarshaler) (string, error) {
 	return b.encodeBytes(raw)
 }
 
-// Decode verifies the token, decrypts the payload and hands it to into's
-// UnmarshalBinary. The returned Token carries the authenticated timestamp
-// and the raw payload bytes. Unmarshal failures surface as
-// ErrTokenMalformed. When ttl > 0, tokens whose authenticated timestamp
-// is older than ttl are rejected — after successful decryption, as the
+// Decode verifies, decrypts and unmarshals the payload. A positive ttl
+// rejects tokens older than ttl; the check runs after decryption, as the
 // spec requires.
 func (b *Branca) Decode(token string, ttl time.Duration, into encoding.BinaryUnmarshaler) (*Token, error) {
 	tok, err := b.open(token, ttl)

@@ -6,8 +6,7 @@ vet:
 test: vet
 	go test ./... -race
 
-# Permission-check and token micro-benchmarks. Each package's benchmarks
-# feed the numbers in README.md (Ryzen 7 3700X, Go 1.25, -benchtime=3s).
+# Benchmarks behind the numbers in README.md.
 bench:
 	go test -bench=. -benchmem -benchtime=3s -run=^$$ ./authz ./jwt ./branca
 

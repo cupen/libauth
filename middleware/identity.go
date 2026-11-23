@@ -7,13 +7,12 @@ import (
 	"github.com/cupen/libauth/model"
 )
 
-// IdentityFunc extracts the acting user's ID from a request. An error
-// means the caller could not be identified (guards answer 401).
+// IdentityFunc extracts the acting user's ID from a request; an error means
+// the caller could not be identified.
 type IdentityFunc func(r *http.Request) (model.UserID, error)
 
-// HeaderIdentity returns an IdentityFunc reading a header (default
-// "X-User-ID"). For demos and internal services; wire your real auth
-// (JWT, session, ...) here in production.
+// HeaderIdentity reads the user ID from a header (default "X-User-ID"). It is
+// meant for demos and internal services.
 func HeaderIdentity(header string) IdentityFunc {
 	if header == "" {
 		header = "X-User-ID"
