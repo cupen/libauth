@@ -1,102 +1,104 @@
-# libauth — 多角色权限系统（RBAC）
+English | [简体中文](README-zh.md)
 
-`libauth` 是一个用 Go 实现的多角色权限控制（RBAC）库：用户可持有多个角色，角色可继承，权限基于 `资源:操作` 字符串并支持通配符。核心包零第三方依赖，附带线程安全的内存存储、可插拔的 `Store` 接口、`net/http` 中间件，并内置 JWT 与 Branca 两种令牌实现。
+# libauth — Multi-Role Permission System (RBAC)
 
-## 特性
+`libauth` is a Go library for multi-role access control (RBAC): a user may hold several roles, roles may inherit from one another, and permissions are `resource:action` strings with wildcard support. The core package has zero third-party dependencies and ships with a thread-safe in-memory store, a pluggable `Store` interface, `net/http` middleware, and built-in JWT and Branca token implementations.
 
-- 多角色 + 单链继承 + 通配符权限（`article:*` / `*`）+ 直接授权。
-- 内置 `read`（查看）/ `write`（编辑）/ `exec`（执行）操作常量，同时支持任意自定义操作字符串。
-- 可插拔 `Store` 接口；内置 `MemoryStore` 是参考实现。
-- HTTP 中间件 `Require` / `RequireAll` / `RequireAny` / `RequireRole`，通过后把用户注入 `context`。
-- 两种令牌:`jwt`（HS256 / Ed25519,纯标准库）、`branca`（XChaCha20-Poly1305,强加密，无铭文）
-- 核心零三方依赖,并发安全,`Check` 在缓存命中路径上是一次 map 查找。
+## Features
 
-## 快速开始
+- Multiple roles per user, single-parent inheritance, wildcard permissions (`article:*` / `*`) and direct grants.
+- Built-in `read` / `write` / `exec` action constants; any custom action string works too.
+- Pluggable `Store` interface; the bundled `MemoryStore` is the reference implementation.
+- HTTP middleware `Require` / `RequireAll` / `RequireAny` / `RequireRole` that injects the resolved user into the `context`.
+- Two token formats: `jwt` (HS256 / Ed25519, stdlib only) and `branca` (XChaCha20-Poly1305, encrypted, no plaintext).
+- Zero third-party dependencies in the core, concurrency-safe, and a cache-hit `Check` is a single map lookup.
+
+## Quick start
 
 ```go
 m := libauth.New()
 
-// 角色：最后一个参数是父角色，没有则传 ""
+// The last argument is the parent role; pass "" for none.
 m.CreateRole("editor",  []libauth.Permission{{"article", "create"}, {"article", "edit"}}, "")
 m.CreateRole("viewer",  []libauth.Permission{{"article", "read"}}, "")
-m.CreateRole("publisher", []libauth.Permission{{"article", "publish"}}, "editor") // 继承 editor
-m.CreateRole("admin",   []libauth.Permission{{"*", ""}}, "")                       // 全局通配
+m.CreateRole("publisher", []libauth.Permission{{"article", "publish"}}, "editor") // inherits editor
+m.CreateRole("admin",   []libauth.Permission{{"*", ""}}, "")                       // global wildcard
 
-m.CreateUser("bob",   "editor", "viewer")  // 多角色
+m.CreateUser("bob",   "editor", "viewer")  // multiple roles
 m.CreateUser("alice", "admin")
 
 m.Check("bob",   libauth.Permission{"article", "create"}) // nil
 m.Check("bob",   libauth.Permission{"article", "delete"}) // ErrPermissionDenied
-m.Check("alice", libauth.Permission{"article", "delete"}) // nil（通配符）
+m.Check("alice", libauth.Permission{"article", "delete"}) // nil (wildcard)
 
-m.AssignRole("bob", "publisher") // 动态授权
+m.AssignRole("bob", "publisher") // dynamic grant
 m.Check("bob", libauth.Permission{"article", "publish"})  // nil
 ```
 
-## 权限格式
+## Permission format
 
-`Permission` 是 `资源:操作` 字符串，段数可扩展（如 `tenant:article:read`）。内置 `libauth.ActionRead`、`libauth.ActionWrite`、`libauth.ActionExec` 分别表示查看、编辑、执行；它们是字符串常量，不是封闭枚举。自定义操作直接使用字符串即可，无需注册：
+A `Permission` is a `resource:action` string; the number of segments is open-ended (e.g. `tenant:article:read`). `libauth.ActionRead`, `libauth.ActionWrite` and `libauth.ActionExec` mean read, write and execute respectively; they are string constants, not a closed enum. Custom actions need no registration:
 
 ```go
 read := libauth.Permission{Resource: "article", Action: libauth.ActionRead}
-publish := libauth.Permission{Resource: "article", Action: "publish"} // 自定义操作
+publish := libauth.Permission{Resource: "article", Action: "publish"} // custom action
 ```
 
-三种内置操作相互独立：`write` 不隐含 `read`，`exec` 也不隐含其他权限，需要分别授权。内置与自定义操作遵循相同的精确匹配和通配符规则：
+The three built-in actions are independent: `write` does not imply `read`, and `exec` implies neither. Built-in and custom actions follow the same exact-match and wildcard rules:
 
-| 已授予（模式） | 检查（实际） | 结果 |
+| Granted (pattern) | Checked (actual) | Result |
 |---|---|---|
 | `article:create` | `article:create` | ✅ |
 | `article:*` | `article:delete` | ✅ |
-| `*` | 任意 | ✅ |
+| `*` | anything | ✅ |
 | `article:read` | `article:delete` | ❌ |
-| `article:read` | `article:read:extra` | ❌（段数不同） |
+| `article:read` | `article:read:extra` | ❌ (segment count differs) |
 
-## API 概览
+## API overview
 
-`Enforcer`（见 [authz/authz.go](authz/authz.go)）—— RBAC 编排层，把 Store 与领域规则揉到一起给出"允许/拒绝"的答案：
+`Enforcer` (see [authz/authz.go](authz/authz.go)) is the RBAC orchestration layer: it combines the Store with the domain rules and answers allowed/denied.
 
-- 用户：`CreateUser` / `DeleteUser` / `GetUser` / `ListUsers`
-- 角色分配：`AssignRole` / `RevokeRole` / `RolesFor`（含继承链）
-- 角色：`CreateRole` / `UpdateRole` / `DeleteRole` / `GetRole` / `ListRoles` / `SetParent`
-- 权限：`GrantPermission` / `RevokePermission`（角色）；`GrantDirectPermission` / `RevokeDirectPermission`（用户直授）
-- 检查：`Check`（返回错误）、`HasPermission`、`HasRole`（直接持有，不含继承）；组合语义自己循环即可
-- 汇总：`PermissionsFor`（用户的有效权限全集，去重排序）
-- 构造：`libauth.New()`，可选 `libauth.WithStore(s)`、`libauth.WithMaxDepth(n)`、`libauth.WithCacheSize(n)`、`libauth.WithCacheTTL(d)`、`libauth.WithUnboundedCache()`；用户缓存默认最多 10000 条、24 小时未访问过期
+- Users: `CreateUser` / `DeleteUser` / `GetUser` / `ListUsers`
+- Role assignment: `AssignRole` / `RevokeRole` / `RolesFor` (including the inheritance chain)
+- Roles: `CreateRole` / `UpdateRole` / `DeleteRole` / `GetRole` / `ListRoles` / `SetParent`
+- Permissions: `GrantPermission` / `RevokePermission` (roles); `GrantDirectPermission` / `RevokeDirectPermission` (users)
+- Checks: `Check` (returns an error), `HasPermission`, `HasRole` (direct roles only, no inheritance); combine them with your own loops
+- Aggregation: `PermissionsFor` (the user's full effective permission set, deduplicated and sorted)
+- Construction: `libauth.New()`, plus the optional `libauth.WithStore(s)`, `libauth.WithMaxDepth(n)`, `libauth.WithCacheSize(n)`, `libauth.WithCacheTTL(d)` and `libauth.WithUnboundedCache()`; the user cache defaults to 10,000 entries and expires after 24 hours without access
 
-并发契约：读（`Check` / `Has*` / `PermissionsFor` 等）可任意并发；写（`AssignRole` 等变更）之间串行化、不丢更新；变更返回后，后续读立即看到新状态。用户级写入只失效该用户缓存；角色级写入清空整个用户缓存。`Enforcer` 必须是其 `Store` 的唯一写入方。
+Concurrency contract: reads (`Check` / `Has*` / `PermissionsFor` and friends) may run concurrently; writes (mutations such as `AssignRole`) are serialized against each other and never lose updates; once a mutation returns, subsequent reads observe it. User-level writes invalidate only that user's cache entry; role-level writes flush the whole user cache. The `Enforcer` must be the only writer to its `Store`.
 
-`Store` 接口（见 [store/store.go](store/store.go)）定义了持久化契约，内置 `MemoryStore` 是参考实现；接入 MySQL/Postgres 时实现该接口并通过 `libauth.New(libauth.WithStore(myStore))` 注入。
+The `Store` interface (see [store/store.go](store/store.go)) defines the persistence contract; the bundled `MemoryStore` is the reference implementation. To back libauth with MySQL/Postgres, implement the interface and inject it via `libauth.New(libauth.WithStore(myStore))`.
 
-### 内存模型与适用规模
+### In-memory model and sizing
 
-`MemoryStore` 和 `Enforcer` 缓存的内存语义不同，使用前请区分：
+`MemoryStore` and the `Enforcer` cache have different memory semantics and should not be confused:
 
-| 数据 | 何时进入内存 | 生命周期 |
+| Data | When it enters memory | Lifetime |
 |---|---|---|
-| `MemoryStore` 的 `User` / `Role` | `CreateUser` / `CreateRole` 立即保存 | 直到对应 `Delete*`；这是内存参考实现，不是缓存 |
-| `Enforcer` 用户缓存（direct roles + `grantedSet`） | 第一次 `Check` / `HasRole` / `HasPermission` / `PermissionsFor` 时懒构建 | 默认最多 10000 个用户、24 小时未访问过期；容量满时用 second-chance 淘汰 |
+| `MemoryStore` `User` / `Role` | immediately, on `CreateUser` / `CreateRole` | until the matching `Delete*`; this is an in-memory implementation, not a cache |
+| `Enforcer` user cache (direct roles + `grantedSet`) | lazily, on the first `Check` / `HasRole` / `HasPermission` / `PermissionsFor` | at most 10,000 users by default, expiring after 24 hours without access; second-chance eviction when full |
 
-注册本身不会在 `Enforcer` 中建立反向索引或权限缓存；低频用户只有被访问后才会短暂占一个缓存名额。用户级写入只移除该用户条目；角色级写入清空整个用户缓存，因此不需要随注册规模增长的 `roleHolders` / `directRoles` 索引。
+Registration itself builds no reverse index or permission cache in the `Enforcer`; a cold user only occupies a cache slot briefly once accessed. User-level writes remove that one entry; role-level writes flush the whole user cache, which is why there is no `roleHolders` / `directRoles` index that grows with the number of registrations.
 
-一组 Linux/amd64、Go 1.27 下的参考测量（10 万用户、每人 1 个角色、角色 1 个权限，强制 GC 后读堆内存）：
+Reference measurements on Linux/amd64 with Go 1.27 (100,000 users, one role each with one permission, heap after a forced GC):
 
-| 阶段 | 堆内存 | 说明 |
+| Stage | Heap | Notes |
 |---|---:|---|
-| 仅 `MemoryStore` 保存用户 | 13 MB | 131 B/用户，注册数据本体 |
-| `Enforcer.CreateUser` 注册完成 | 13 MB | 注册不再额外建立 Enforcer 索引 |
-| 每个用户 `Check` 一次后 | 30 MB | 缓存最多保留 10000 个用户，本例约增加 16 MB |
+| `MemoryStore` only, users stored | 13 MB | 131 B/user, the registration data itself |
+| after `Enforcer.CreateUser` for all users | 13 MB | registration adds no Enforcer index |
+| after one `Check` per user | 30 MB | the cache holds at most 10,000 users, about +16 MB here |
 
-实际占用随用户 ID 长度、角色数、权限数和角色组合而变。规模判断：
+Actual usage varies with user ID length, role count, permission count and role combinations. Rules of thumb:
 
-- **几千到几万用户**：默认形态通常可接受；
-- **10 万级用户**：应避免 `MemoryStore`，改用外部 Store；`Enforcer` 缓存默认仍有界；
-- **百万级注册用户**：必须使用外部 Store。默认用户缓存仍被限制在 10000 条；条目大小随权限规模变化，可用 `WithCacheSize` / `WithCacheTTL` 调整，或用 `WithUnboundedCache()` 显式恢复旧的无界行为。
+- **A few thousand to a few tens of thousands of users**: the default setup is usually fine;
+- **100,000 users**: avoid `MemoryStore` and use an external Store; the `Enforcer` cache stays bounded by default;
+- **Millions of registered users**: an external Store is mandatory. The user cache is still capped at 10,000 entries; entry size grows with the permission volume, so tune it with `WithCacheSize` / `WithCacheTTL`, or opt back into the old unbounded behaviour with `WithUnboundedCache()`.
 
-## HTTP 中间件
+## HTTP middleware
 
 ```go
-mw, _ := libauth.NewMiddleware(m, libauth.HeaderIdentity("")) // 默认读 X-User-ID
+mw, _ := libauth.NewMiddleware(m, libauth.HeaderIdentity("")) // reads X-User-ID by default
 
 mux := http.NewServeMux()
 mux.Handle("POST /articles", mw.Require  (libauth.Permission{"article", "create"})(create))
@@ -105,16 +107,16 @@ mux.Handle("POST /publish",  mw.RequireAll(libauth.Permission{"article", "edit"}
 mux.Handle("GET  /audit",    mw.RequireRole("admin")(audit))
 ```
 
-- 身份失败或用户不存在 → `401`；已认证但缺权限 → `403`（`*PermissionDeniedError`，可用 `errors.Is(err, libauth.ErrPermissionDenied)` 匹配）。拒绝载荷如实描述缺口：单权限填 `Required`，`RequireAny` 填 `RequiredAny`，`RequireRole` 填 `RequiredRole`。
-- 通过校验后 `libauth.UserFromContext(r.Context())` 拿到 `*User`。
-- 身份来源是个 `IdentityFunc(r *http.Request) (UserID, error)`,显式传入（`nil` 直接报错,不会静默退到明文头）；`HeaderIdentity("")` 读 `X-User-ID`,仅供演示与内网。要接 JWT / Branca,自己写几行:取 `Authorization` 头、调 `Decode`、返回 `sub`。完整样板见 [_examples/jwtauth](_examples/jwtauth/main.go)。
-- 自定义错误响应用选项：`libauth.NewMiddleware(m, identity, libauth.WithOnError(handler))`。`NewMiddleware` 也接受任何 `Authorizer` 实现,`*Enforcer` 开箱即用。
+- Identity failure or an unknown user → `401`; authenticated but lacking permission → `403` (a `*PermissionDeniedError`, matchable with `errors.Is(err, libauth.ErrPermissionDenied)`). The denial payload names the gap: `Required` for a single permission, `RequiredAny` for `RequireAny`, `RequiredRole` for `RequireRole`.
+- After the guard passes, `libauth.UserFromContext(r.Context())` returns the `*User`.
+- The identity source is an `IdentityFunc(r *http.Request) (UserID, error)` and must be passed explicitly (`nil` is an error, never a silent fallback to a plaintext header); `HeaderIdentity("")` reads `X-User-ID` and is meant for demos and internal networks only. To use JWT / Branca, write a few lines yourself: read the `Authorization` header, call `Decode`, return `sub`. See [_examples/jwtauth](_examples/jwtauth/main.go) for a full example.
+- Custom error responses: `libauth.NewMiddleware(m, identity, libauth.WithOnError(handler))`. `NewMiddleware` accepts any `Authorizer` implementation; `*Enforcer` works out of the box.
 
-## JWT 令牌
+## JWT tokens
 
-`jwt` 子包（[RFC 7519](https://www.rfc-editor.org/rfc/rfc7519)）签发/校验 JWT——HS256 与 Ed25519 都来自标准库,零三方依赖。安全取舍:算法钉死在构造时（`alg: "none"` 与跨算法混淆在结构上不可能）、`Encode` 强制要求 `exp`（或 `WithTTL`）否则报错、签名先于 claims 解析、`exp`/`nbf`/`iat` 全部校验（`WithLeeway` 容忍时钟漂移）、HS256 密钥至少 32 字节。
+The `jwt` subpackage ([RFC 7519](https://www.rfc-editor.org/rfc/rfc7519)) signs and verifies JWTs — HS256 and Ed25519, both from the standard library, zero third-party dependencies. Security trade-offs: the algorithm is pinned at construction (so `alg: "none"` and cross-algorithm confusion are structurally impossible), `Encode` requires `exp` (or `WithTTL`), the signature is verified before claims are parsed, `exp` / `nbf` / `iat` are all validated (`WithLeeway` tolerates clock skew), and HS256 keys must be at least 32 bytes.
 
-一个 `JWT` 类型覆盖全部部署形态,动词只有 `Encode` / `Decode`:
+A single `JWT` type covers every deployment shape, with just two verbs, `Encode` and `Decode`:
 
 ```go
 auth, _ := jwt.New(secret, jwt.WithTTL(15*time.Minute), jwt.WithIssuer("login"),
@@ -123,7 +125,7 @@ auth, _ := jwt.New(secret, jwt.WithTTL(15*time.Minute), jwt.WithIssuer("login"),
 token, _  := auth.Encode(jwt.Claims{Subject: "bob"})
 claims, _ := auth.Decode(token) // claims.Subject / ExpiresAt / Extra
 
-// 接入中间件 —— token 的 sub 即用户 ID,几行 IdentityFunc 就行
+// Wire it into the middleware — the token's sub is the user ID.
 identity := func(r *http.Request) (libauth.UserID, error) {
     token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
     claims, err := auth.Decode(token)
@@ -132,23 +134,24 @@ identity := func(r *http.Request) (libauth.UserID, error) {
 }
 mw, _ := libauth.NewMiddleware(m, identity)
 
-// 多服务验签、签发方独占密钥:签发侧持私钥,验签侧只要公钥
+// Multi-service verification, issuer-only private key: the encoder holds the private
+// key, verifiers only need the public half.
 issuer,   _ := jwt.NewEdDSA(priv)             // Encode + Decode
-verifier, _ := jwt.NewVerifierEdDSA(pub)       // 仅 Decode;Encode 报 ErrInvalidKey
+verifier, _ := jwt.NewVerifierEdDSA(pub)      // Decode only; Encode fails with ErrInvalidKey
 ```
 
-## Branca 令牌
+## Branca tokens
 
-`branca` 子包实现 [branca 规范](https://github.com/tuupola/branca-spec):XChaCha20-Poly1305 加密、Base62 编码的自校验令牌。安全取舍与 JWT 一致:算法唯一、时间戳在认证头内不可篡改、TTL 在解密成功之后校验(规范要求)、密钥恰好 32 字节。
+The `branca` subpackage implements the [branca spec](https://github.com/tuupola/branca-spec): XChaCha20-Poly1305 encryption, base62-encoded, self-validating tokens. The security trade-offs match JWT: a single pinned algorithm, a timestamp inside the authenticated header that cannot be tampered with, a TTL checked only after successful decryption (as the spec requires), and keys of exactly 32 bytes.
 
-| | `jwt` 包 | `branca` 包 |
+| | `jwt` package | `branca` package |
 |---|---|---|
-| 载荷 | 签名后明文可读 | 加密不透明,仅持钥方可读 |
-| 过期 | `exp` 在签发时写死 | TTL 在**验证时**决定,同一令牌对不同消费方可不同 |
-| 信任模型 | Ed25519 可非对称 | 对称密钥,单一信任域 |
-| 依赖 | 纯标准库 | `golang.org/x/crypto` |
+| Payload | signed, readable in plaintext | encrypted and opaque, only key holders can read it |
+| Expiry | `exp` fixed at signing time | TTL decided **at verification**; the same token can differ per consumer |
+| Trust model | Ed25519 allows asymmetric keys | symmetric key, single trust domain |
+| Dependency | stdlib only | `golang.org/x/crypto` |
 
-载荷即字节流;`Encode` / `Decode` 接受任何实现 `encoding.BinaryMarshaler` / `encoding.BinaryUnmarshaler` 的类型,无需泛型:
+The payload is just bytes; `Encode` / `Decode` accept any type implementing `encoding.BinaryMarshaler` / `encoding.BinaryUnmarshaler`, no generics needed:
 
 ```go
 type Session struct {
@@ -158,13 +161,13 @@ type Session struct {
 func (s Session) MarshalBinary() ([]byte, error)  { return json.Marshal(s) }
 func (s *Session) UnmarshalBinary(b []byte) error { return json.Unmarshal(b, s) }
 
-b, _ := branca.New(key /* 32 字节 */)
+b, _ := branca.New(key /* 32 bytes */)
 
 token, _ := b.Encode(Session{Sub: "bob"})
 var s Session
-b.Decode(token, 15*time.Minute, &s) // TTL 在调用方决定
+b.Decode(token, 15*time.Minute, &s) // the caller decides the TTL
 
-// 接入中间件 —— 自己拼 IdentityFunc
+// Wire it into the middleware by writing your own IdentityFunc.
 identity := func(r *http.Request) (libauth.UserID, error) {
     token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
     var s Session
@@ -174,64 +177,64 @@ identity := func(r *http.Request) (libauth.UserID, error) {
 mw, _ := libauth.NewMiddleware(m, identity)
 ```
 
-## 性能
+## Performance
 
-权限检查是热路径,`authz.Enforcer` 对每个被访问用户维护一条缓存 entry(直接角色 + `grantedSet` 扁平化 `{Resource: {Action}}` 索引)。命中路径只持读锁、做 map 查找并原子更新 TTL/second-chance 标记,仍保持零分配;`TestCheckWarmPathZeroAllocs` 钉住这个契约。用户级写入只失效一个 entry;角色级写入清空整个用户缓存,代价 O(capacity),但角色变更是低频管理操作。
+Permission checks are the hot path. `authz.Enforcer` keeps one cache entry per accessed user (direct roles plus a flattened `grantedSet` index of `{Resource: {Action}}`). A hit only takes a read lock, does map lookups and atomically refreshes the TTL / second-chance bit, and allocates nothing; `TestCheckWarmPathZeroAllocs` pins that contract. User-level writes invalidate one entry; role-level writes flush the whole user cache at O(capacity), but role changes are infrequent administrative operations.
 
-`make bench` 跑 `authz` 包的 `Check` 微基准,规模按"角色数 × 每角色权限数"标注,缓存命中与冷启动两路数字:
+`make bench` runs the `Check` microbenchmarks in the `authz` package, labelled by "roles × permissions per role", with warm and cold numbers:
 
-| 规模 | 命中 | 冷启 |
+| Scale | Warm hit | Cold |
 |---|---|---|
-| 单用户 + `*`(参照点) | **56 ns/op**,0 allocs | 1.0 µs/op,18 allocs |
-| 100 角色 × 10 权限(1 000 grants) | 77 ns/op,0 allocs | 74 µs/op,922 allocs |
-| 100 角色 × 100 权限(10 000 grants) | 76 ns/op,0 allocs | 0.70 ms/op,1522 allocs |
-| 1000 角色 × 10 权限(10 000 grants) | 78 ns/op,0 allocs | 0.96 ms/op,9037 allocs |
-| 1000 角色 × 100 权限(100 000 grants) | 80 ns/op,0 allocs | 7.2 ms/op,15 037 allocs |
+| single user + `*` (reference point) | **56 ns/op**, 0 allocs | 1.0 µs/op, 18 allocs |
+| 100 roles × 10 permissions (1,000 grants) | 77 ns/op, 0 allocs | 74 µs/op, 922 allocs |
+| 100 roles × 100 permissions (10,000 grants) | 76 ns/op, 0 allocs | 0.70 ms/op, 1,522 allocs |
+| 1,000 roles × 10 permissions (10,000 grants) | 78 ns/op, 0 allocs | 0.96 ms/op, 9,037 allocs |
+| 1,000 roles × 100 permissions (100,000 grants) | 80 ns/op, 0 allocs | 7.2 ms/op, 15,037 allocs |
 
-关键观察:命中耗时与授权规模基本无关,但比无 TTL 版本多出时间戳与引用位的原子更新;命中路径 0 allocs;冷启随规模线性(主要开销在 store 读 + 继承链解析 + `grantedSet` 构造)。容量 15、16 个用户轮流访问时的 `BenchmarkCheckWithEviction` 约 0.66 µs/op、19 allocs——淘汰只发生在 miss 安装阶段,不进入命中热路径。
+Key observations: warm hits are essentially independent of the authorization size, but cost more than the TTL-free version because of the atomic timestamp and reference-bit updates; warm hits allocate nothing; cold cost grows linearly (mostly store reads, inheritance resolution and `grantedSet` construction). With capacity 15 and 16 users taking turns, `BenchmarkCheckWithEviction` runs at about 0.66 µs/op and 19 allocs — eviction only happens during a miss install and never enters the warm path.
 
-数字采集:AMD Ryzen 9 7900X,Go 1.27,`-benchtime=3s`,Linux/amd64。复现:
+Measured on an AMD Ryzen 9 7900X, Go 1.27, `-benchtime=3s`, Linux/amd64. Reproduce with:
 
 ```bash
-make bench    # authz / jwt / branca 三个包一起跑
+make bench    # runs authz / jwt / branca together
 ```
 
-`jwt` 和 `branca` 包也有热路径基准,载荷是典型身份 claim(`{"sub":"user-1234","scope":"read write","org":"acme"}`,约 80 字节):
+The `jwt` and `branca` packages have hot-path benchmarks too, with a typical identity payload (`{"sub":"user-1234","scope":"read write","org":"acme"}`, ~80 bytes):
 
-| 操作 | HS256 | EdDSA | Branca |
+| Operation | HS256 | EdDSA | Branca |
 |---|---|---|---|
-| 签发(`Encode`) | 2.0 µs | 16.7 µs | 5.1 µs |
-| 校验(`Decode`) | 4.4 µs | 39.0 µs | 2.9 µs |
-| ~1 KiB 载荷的校验 | 1.9 ms | — | 0.07 ms |
+| Sign (`Encode`) | 2.0 µs | 16.7 µs | 5.1 µs |
+| Verify (`Decode`) | 4.4 µs | 39.0 µs | 2.9 µs |
+| Verify with a ~1 KiB payload | 1.9 ms | — | 0.07 ms |
 
-观察:
+Observations:
 
-- **三方校验都在每次请求可承受的量级**;EdDSA 校验 39 µs 主要来自 Ed25519 验签本身的成本,若校验是热路径瓶颈,改用 HS256。
-- **大载荷下 Branca 比 HS256 快 ~27 倍**:JWT 是 base64 明文,1 KiB claim 反序列化在 `encoding/json` 里要走一遍;Branca 是密文,AEAD 解密是定长操作。这是「载荷不透明」换来的实际收益——如果你的 token 要带不少业务字段,这是选 Branca 的硬理由。
+- **All three are affordable per request**; EdDSA verification at 39 µs is mostly the cost of Ed25519 verification itself — switch to HS256 if verification is the hot-path bottleneck.
+- **With large payloads Branca is ~27× faster than HS256**: JWT is base64-encoded plaintext, so a 1 KiB claim set goes through `encoding/json` deserialization; Branca is ciphertext and AEAD decryption is constant-size. That is the practical payoff of opaque payloads — a strong reason to pick Branca if your tokens carry many business fields.
 
-## 运行演示
+## Running the demos
 
 ```bash
-make run                        # example01：X-User-ID 头认证
-go run ./_examples/jwtauth      # JWT 持有者认证
+make run                        # example01: X-User-ID header auth
+go run ./_examples/jwtauth      # JWT bearer auth
 
-# example01 里:
-# alice 是 admin，可以删除
+# In example01:
+# alice is an admin and may delete
 curl -X DELETE -H "X-User-ID: alice" localhost:8080/articles/1
-# carol 只有 viewer 角色，被拒绝（403）
+# carol only has the viewer role, so this is denied (403)
 curl -X POST -H "X-User-ID: carol" localhost:8080/articles -d '{"title":"hi"}'
-# dave 经 publisher 继承 editor，可以创建
+# dave inherits editor through publisher, so this is allowed
 curl -X POST -H "X-User-ID: dave" localhost:8080/articles -d '{"title":"hi"}'
 ```
 
-更多示例看 `_examples/` 下各目录的 `main.go`,或根目录的 `example_test.go`(可直接 `go test` 跑)。
+More examples live in the `main.go` files under `_examples/`, and in `example_test.go` at the repository root (runnable with `go test`).
 
-## 开发
+## Development
 
 ```bash
 make test    # go vet + go test -race
-make bench   # 跑 authz 包的 Check 微基准（详见「性能」一节）
-make build   # 编译示例服务到 bin/
+make bench   # run the authz Check microbenchmarks (see Performance)
+make build   # build the example server into bin/
 ```
 
 MIT License.
