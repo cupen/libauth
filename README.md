@@ -19,17 +19,17 @@ Authentication and authorization for Go: RBAC permissions (multi-role users, sin
 m := libauth.New()
 
 // Last argument is the parent role; "" for none.
-m.CreateRole("editor",    []libauth.Permission{{"article", "create"}, {"article", "edit"}}, "")
-m.CreateRole("viewer",    []libauth.Permission{{"article", "read"}}, "")
-m.CreateRole("publisher", []libauth.Permission{{"article", "publish"}}, "editor") // inherits editor
-m.CreateRole("admin",     []libauth.Permission{{"*", ""}}, "")                    // wildcard
+m.CreateRole("viewer", []libauth.Permission{{"article", "view"}}, "")
+m.CreateRole("editor", []libauth.Permission{{"article", "view"}, {"article", "edit"}}, "") // edit includes view
+m.CreateRole("publisher", []libauth.Permission{{"article", "publish"}}, "editor")         // inherits editor
+m.CreateRole("admin", []libauth.Permission{{"article", "*"}}, "") // admin includes all
 
-m.CreateUser("bob", "editor", "viewer")
+m.CreateUser("bob", "editor")
 m.CreateUser("alice", "admin")
 
-m.Check("bob",   libauth.Perm("article", "create")) // nil
-m.Check("bob",   libauth.Perm("article", "delete")) // ErrPermissionDenied
-m.Check("alice", libauth.Perm("article", "delete")) // nil
+m.Check("bob",   libauth.Perm("article", "view"))  // nil
+m.Check("bob",   libauth.Perm("article", "publish"))  // ErrPermissionDenied
+m.Check("alice", libauth.Perm("article", "publish"))  // nil
 
 m.AssignRole("bob", "publisher")
 m.Check("bob", libauth.Perm("article", "publish"))  // nil
@@ -37,15 +37,19 @@ m.Check("bob", libauth.Perm("article", "publish"))  // nil
 
 ## Permissions
 
-`resource:action`; segments are open-ended (`tenant:article:read`). Actions are plain strings (`read`, `write`, `exec`, or anything else) and imply nothing: `write` does not grant `read`. Build one with `libauth.Perm("article", "read")`, or parse a string with `ParsePermission("article:read")`.
+`resource:action`; segments are open-ended (`tenant:article:view`). Actions are plain strings matched exactly: `view` does not grant `edit`. Build one with `libauth.Perm("article", "view")`, or parse a string with `ParsePermission("article:view")`.
 
 | Granted | Checked | Result |
 |---|---|---|
-| `article:create` | `article:create` | ✅ |
-| `article:*` | `article:delete` | ✅ |
+| `article:view` | `article:view` | ✅ |
+| `article:*` | `article:edit` | ✅ |
 | `*` | anything | ✅ |
-| `article:read` | `article:delete` | ❌ |
-| `article:read` | `article:read:extra` | ❌ (segment count differs) |
+| `article:view` | `article:edit` | ❌ |
+| `article:view` | `article:view:extra` | ❌ (segment count differs) |
+
+### Recommended actions
+
+`view`, `edit`, `admin`, `exec`: `edit` includes `view`; `admin` includes all actions, i.e. the built-in `article:*`; `exec` stands alone and only `admin` includes it. The library compares actions exactly, so an `edit` role must also list `view`.
 
 ## API
 
@@ -71,8 +75,8 @@ Reads run concurrently; writes are serialized and visible once they return. The 
 mw, _ := libauth.NewMiddleware(m, libauth.HeaderIdentity("")) // reads X-User-ID
 
 mux := http.NewServeMux()
-mux.Handle("POST /articles", mw.Require(libauth.Perm("article", "create"))(create))
-mux.Handle("POST /publish",  mw.RequireAll(libauth.Perm("article", "edit"), libauth.Perm("article", "publish"))(publish))
+mux.Handle("POST /articles", mw.Require(libauth.Perm("article", "edit"))(create))
+mux.Handle("POST /publish",  mw.RequireAll(libauth.Perm("article", "edit"), libauth.Perm("article", "exec"))(publish))
 mux.Handle("GET /audit",     mw.RequireRole("admin")(audit))
 ```
 

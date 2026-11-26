@@ -19,17 +19,17 @@ Go 的认证与鉴权工具集：权限采用 RBAC 模型（多角色、单链�
 m := libauth.New()
 
 // 最后一个参数是父角色，没有则传 ""
-m.CreateRole("editor",    []libauth.Permission{{"article", "create"}, {"article", "edit"}}, "")
-m.CreateRole("viewer",    []libauth.Permission{{"article", "read"}}, "")
-m.CreateRole("publisher", []libauth.Permission{{"article", "publish"}}, "editor") // 继承 editor
-m.CreateRole("admin",     []libauth.Permission{{"*", ""}}, "")                    // 通配
+m.CreateRole("viewer", []libauth.Permission{{"article", "view"}}, "")
+m.CreateRole("editor", []libauth.Permission{{"article", "view"}, {"article", "edit"}}, "") // edit 包含 view
+m.CreateRole("publisher", []libauth.Permission{{"article", "publish"}}, "editor")         // 继承 editor
+m.CreateRole("admin", []libauth.Permission{{"article", "*"}}, "") // admin 包含全部
 
-m.CreateUser("bob", "editor", "viewer")
+m.CreateUser("bob", "editor")
 m.CreateUser("alice", "admin")
 
-m.Check("bob",   libauth.Perm("article", "create")) // nil
-m.Check("bob",   libauth.Perm("article", "delete")) // ErrPermissionDenied
-m.Check("alice", libauth.Perm("article", "delete")) // nil
+m.Check("bob",   libauth.Perm("article", "view"))  // nil
+m.Check("bob",   libauth.Perm("article", "publish"))  // ErrPermissionDenied
+m.Check("alice", libauth.Perm("article", "publish"))  // nil
 
 m.AssignRole("bob", "publisher")
 m.Check("bob", libauth.Perm("article", "publish"))  // nil
@@ -37,15 +37,19 @@ m.Check("bob", libauth.Perm("article", "publish"))  // nil
 
 ## 权限
 
-`资源:操作`，段数可扩展（`tenant:article:read`）。操作是普通字符串（`read`、`write`、`exec` 或任意名称），彼此独立：`write` 不隐含 `read`。用 `libauth.Perm("article", "read")` 构造，或用 `ParsePermission("article:read")` 解析字符串。
+`资源:操作`，段数可扩展（`tenant:article:view`）。操作是普通字符串，按精确值匹配：`view` 不隐含 `edit`。用 `libauth.Perm("article", "view")` 构造，或用 `ParsePermission("article:view")` 解析字符串。
 
 | 已授予 | 检查 | 结果 |
 |---|---|---|
-| `article:create` | `article:create` | ✅ |
-| `article:*` | `article:delete` | ✅ |
+| `article:view` | `article:view` | ✅ |
+| `article:*` | `article:edit` | ✅ |
 | `*` | 任意 | ✅ |
-| `article:read` | `article:delete` | ❌ |
-| `article:read` | `article:read:extra` | ❌（段数不同） |
+| `article:view` | `article:edit` | ❌ |
+| `article:view` | `article:view:extra` | ❌（段数不同） |
+
+### 推荐动作
+
+`view`、`edit`、`admin`、`exec`：`edit` 包含 `view`；`admin` 包含全部动作，即内置的 `article:*`；`exec` 独立，仅被 `admin` 包含。库按动作精确比较，因此 `edit` 角色需同时列出 `view`。
 
 ## API
 
@@ -71,8 +75,8 @@ m.Check("bob", libauth.Perm("article", "publish"))  // nil
 mw, _ := libauth.NewMiddleware(m, libauth.HeaderIdentity("")) // 读 X-User-ID
 
 mux := http.NewServeMux()
-mux.Handle("POST /articles", mw.Require(libauth.Perm("article", "create"))(create))
-mux.Handle("POST /publish",  mw.RequireAll(libauth.Perm("article", "edit"), libauth.Perm("article", "publish"))(publish))
+mux.Handle("POST /articles", mw.Require(libauth.Perm("article", "edit"))(create))
+mux.Handle("POST /publish",  mw.RequireAll(libauth.Perm("article", "edit"), libauth.Perm("article", "exec"))(publish))
 mux.Handle("GET /audit",     mw.RequireRole("admin")(audit))
 ```
 
